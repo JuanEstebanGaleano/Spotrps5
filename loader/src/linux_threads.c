@@ -77,12 +77,12 @@ static int nativeStack(void *token, void **base, size_t *bytes, size_t *guard) {
     if (!native || !native->created || !native->stack_low) return LINUX_EIO;
     *base = native->stack_low;
     *bytes = native->stack_bytes;
-    *guard = 0;
+    *guard = 4096;
     return 0;
 }
 static int nativeCurrentStack(void **base, size_t *bytes, size_t *guard) {
     if (!platformThreadStack(base, bytes)) return LINUX_EIO;
-    *guard = 0;
+    *guard = 4096;
     return 0;
 }
 void linuxThreadYield(void) { platformYield(); }

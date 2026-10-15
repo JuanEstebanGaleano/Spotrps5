@@ -186,6 +186,36 @@ int linuxNetNativeSetsockopt(int handle, int level, int name, const void *value,
     trace("net.setsockopt handle=%d level=0x%x name=0x%x result=%d", handle, level, name, result);
     return result < 0 ? failure("setsockopt", error) : 0;
 }
+// IPPROTO_IP options (Linux numbers): multicast for mDNS. The multicast TTL/loop take one byte on BSD systems.
+int linuxNetNativeIpOption(int handle, int name, const void *value, unsigned length, int *error) {
+    int result;
+    if (!value || length < 1) {
+        *error = LINUX_EFAULT;
+        return -1;
+    }
+    int number = length >= sizeof(int) ? *(const int *)value : *(const unsigned char *)value;
+    switch (name) {
+        case 2: result = setsockopt(handle, IPPROTO_IP, IP_TTL, &number, sizeof(number)); break;
+        case 32:
+            if (length < sizeof(struct in_addr)) return *error = LINUX_EINVAL, -1;
+            result = setsockopt(handle, IPPROTO_IP, IP_MULTICAST_IF, value, sizeof(struct in_addr));
+            break;
+        case 33:
+        case 34: {
+            unsigned char byte = (unsigned char)number;
+            result = setsockopt(handle, IPPROTO_IP, name == 33 ? IP_MULTICAST_TTL : IP_MULTICAST_LOOP, &byte, 1);
+            break;
+        }
+        case 35:
+        case 36:
+            if (length < 2 * sizeof(struct in_addr)) return *error = LINUX_EINVAL, -1;
+            result = setsockopt(handle, IPPROTO_IP, name == 35 ? IP_ADD_MEMBERSHIP : IP_DROP_MEMBERSHIP, value, 2 * sizeof(struct in_addr));
+            break;
+        default: *error = LINUX_ENOPROTOOPT; return -1;
+    }
+    trace("net.ipoption handle=%d linux_name=%d result=%d", handle, name, result);
+    return result < 0 ? failure("ipoption", error) : 0;
+}
 int linuxNetNativeGetsockopt(int handle, int level, int name, void *value, unsigned *length, int *error) {
     int native_name = nativeOption(level, name);
     if (native_name < 0) {

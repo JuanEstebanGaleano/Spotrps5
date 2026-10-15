@@ -109,7 +109,7 @@ static const char *baseName(const char *path) {
 
 // Libraries the adapter registry itself stands for: never loaded from files.
 static bool providedByRegistry(const char *name) {
-    static const char *const provided[] = {"libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0", "librt.so.1", "libz.so.1", "ld-linux-x86-64.so.2"};
+    static const char *const provided[] = {"libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0", "librt.so.1", "libz.so.1", "libgcc_s.so.1", "ld-linux-x86-64.so.2"};
     for (unsigned i = 0; i < sizeof(provided) / sizeof(provided[0]); ++i)
         if (!strcmp(name, provided[i])) return true;
     return false;

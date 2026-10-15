@@ -20,6 +20,7 @@ int linuxNetNativeBind(int handle, const BsdSockaddrIn *address, int *error);
 int linuxNetNativeListen(int handle, int backlog, int *error);
 int linuxNetNativeAccept(int handle, BsdSockaddrIn *address, int *error);  // returns the new handle
 int linuxNetNativeName(int handle, bool peer, BsdSockaddrIn *address, int *error);
+int linuxNetNativeIpOption(int handle, int name, const void *value, unsigned length, int *error);
 int linuxNetNativeSetsockopt(int handle, int level, int name, const void *value, unsigned length, int *error);
 int linuxNetNativeGetsockopt(int handle, int level, int name, void *value, unsigned *length, int *error);
 int linuxNetNativeShutdown(int handle, int how, int *error);

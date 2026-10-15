@@ -184,8 +184,15 @@ typedef struct {
 } Binding;
 #define BIND(name, function) {name, (uintptr_t)(function), "GLIBC_2.2.5", "libc.so.6"}
 #define BINDV(name, function, version) {name, (uintptr_t)(function), version, "libc.so.6"}
+#define BINDG(name, function, version) {name, (uintptr_t)(function), version, "libgcc_s.so.1"}
 #define BINDZ(name, function, version) {name, (uintptr_t)(function), version, "libz.so.1"}
 static const Binding bindings[] = {
+    BINDG("_Unwind_Backtrace", linuxUnwindBacktrace, "GCC_3.3"), BINDG("_Unwind_RaiseException", linuxUnwindRaise, "GCC_3.0"),
+    BINDG("_Unwind_Resume", linuxUnwindResume, "GCC_3.0"), BINDG("_Unwind_DeleteException", linuxUnwindDelete, "GCC_3.0"),
+    BINDG("_Unwind_GetIP", linuxUnwindZero, "GCC_3.0"), BINDG("_Unwind_GetIPInfo", linuxUnwindGetIPInfo, "GCC_4.2.0"),
+    BINDG("_Unwind_GetCFA", linuxUnwindZero, "GCC_3.3"), BINDG("_Unwind_GetLanguageSpecificData", linuxUnwindZero, "GCC_3.0"),
+    BINDG("_Unwind_GetRegionStart", linuxUnwindZero, "GCC_3.0"), BINDG("_Unwind_GetDataRelBase", linuxUnwindZero, "GCC_3.0"),
+    BINDG("_Unwind_GetTextRelBase", linuxUnwindZero, "GCC_3.0"),
     BIND("memcpy", memcpy), BIND("memmove", memmove), BIND("memset", memset), BIND("memcmp", memcmp), BIND("strlen", strlen), BIND("strnlen", boundedLength),
     BIND("strcmp", strcmp), BIND("strncmp", strncmp), BIND("strchr", strchr), BIND("strrchr", strrchr), BIND("strstr", strstr), BIND("strcpy", strcpy),
     BIND("strncpy", strncpy), BIND("strcat", strcat), BIND("strncat", strncat), BIND("strcspn", strcspn), BIND("stpcpy", copyEnd), BIND("strsep", splitString),
@@ -342,7 +349,7 @@ bool linuxAbiLookup(const char *name, uintptr_t *address) {
     return false;
 }
 static bool providedLibrary(const char *name) {
-    static const char *const provided[] = {"libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0", "librt.so.1", "libz.so.1", "ld-linux-x86-64.so.2"};
+    static const char *const provided[] = {"libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0", "librt.so.1", "libz.so.1", "libgcc_s.so.1", "ld-linux-x86-64.so.2"};
     for (unsigned i = 0; i < sizeof(provided) / sizeof(provided[0]); ++i)
         if (!strcmp(name, provided[i])) return true;
     return false;

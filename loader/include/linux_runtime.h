@@ -73,7 +73,7 @@ typedef struct {
     int64_t number;
     uint64_t calls;
 } LinuxSyscallRecord;
-long linuxRuntimeSyscall(long number);
+long linuxRuntimeSyscall(long number, long a1, long a2, long a3, long a4, long a5);
 size_t linuxRuntimeUnsupportedSyscalls(LinuxSyscallRecord *out, size_t maximum);
 
 // Auxiliary vector (getauxval). The hardware capabilities describe the PS5's Zen 2 cores.

@@ -159,3 +159,29 @@ unsigned linuxAbiIfNameToIndex(const char *name) {
     *linuxAbiErrnoLocation() = LINUX_ENODEV;
     return 0;
 }
+
+// ---- libgcc_s unwinder: panic=abort never unwinds, but std still references these; report "no frames" ----------------------------
+#define URC_END_OF_STACK 5
+int linuxUnwindBacktrace(void *callback, void *argument) {
+    (void)callback;
+    (void)argument;
+    return URC_END_OF_STACK;
+}
+int linuxUnwindRaise(void *exception) {
+    (void)exception;
+    return URC_END_OF_STACK;
+}
+void linuxUnwindResume(void *exception) {
+    (void)exception;
+    linuxRuntimeAbort();
+}
+void linuxUnwindDelete(void *exception) { (void)exception; }
+uintptr_t linuxUnwindZero(void *context) {
+    (void)context;
+    return 0;
+}
+uintptr_t linuxUnwindGetIPInfo(void *context, int *before) {
+    (void)context;
+    if (before) *before = 0;
+    return 0;
+}

@@ -9,6 +9,7 @@
 #include "linux_vm.h"
 #include <setjmp.h>
 #include <stdatomic.h>
+#include <time.h>
 #include <string.h>
 #include "platform.h"
 
@@ -688,8 +689,53 @@ void *linuxRuntimeMremap(void *old_address, size_t old_size, size_t new_size, in
 // ---- syscall ----------------------------------------------------------------------------------
 #define SYSCALL_RECORDS 8u
 static LinuxSyscallRecord syscall_records[SYSCALL_RECORDS];
-long linuxRuntimeSyscall(long number) {
+// futex: no kernel wait queues here, so waiters poll briefly; any wake releases every waiter (futex allows spurious wake-ups).
+static _Atomic unsigned futex_generation;
+static _Atomic int futex_waiters;
+static long futexCall(int *address, int op, int value, const LinuxTimespec *timeout) {
+    const int command = op & 0x7f;
+    if (command == 1 || command == 10) {  // FUTEX_WAKE, FUTEX_WAKE_BITSET
+        int waiting = atomic_load(&futex_waiters);
+        if (waiting <= 0) return 0;
+        atomic_fetch_add(&futex_generation, 1);
+        return value < waiting ? value : waiting;
+    }
+    if (command != 0 && command != 9) return fail(LINUX_ENOSYS);  // WAIT, WAIT_BITSET only
+    if (!address) return fail(LINUX_EFAULT);
+    uint64_t deadline = 0;
+    if (timeout) {
+        uint64_t span = (uint64_t)timeout->seconds * 1000000000u + (uint64_t)timeout->nanoseconds;
+        if (command == 0) {
+            deadline = platformMonotonicNs() + span;
+        } else {  // absolute, on CLOCK_MONOTONIC or (flag 256) CLOCK_REALTIME
+            struct timespec now;
+            clock_gettime((op & 256) ? CLOCK_REALTIME : CLOCK_MONOTONIC, &now);
+            uint64_t current = (uint64_t)now.tv_sec * 1000000000u + (uint64_t)now.tv_nsec;
+            deadline = platformMonotonicNs() + (span > current ? span - current : 0);
+        }
+    }
+    atomic_fetch_add(&futex_waiters, 1);
+    unsigned generation = atomic_load(&futex_generation);
+    long result = 0;
+    if (__atomic_load_n(address, __ATOMIC_SEQ_CST) != value) {
+        result = fail(LINUX_EAGAIN);
+    } else {
+        for (;;) {
+            if (atomic_load(&futex_generation) != generation) break;
+            if (deadline && platformMonotonicNs() >= deadline) {
+                result = fail(LINUX_ETIMEDOUT);
+                break;
+            }
+            platformSleepNs(100000);
+        }
+    }
+    atomic_fetch_sub(&futex_waiters, 1);
+    return result;
+}
+long linuxRuntimeSyscall(long number, long a1, long a2, long a3, long a4, long a5) {
+    (void)a5;
     if (number == LINUX_SYS_GETTID) return (long)(linuxPthreadSelf() & 0x7fffffff);
+    if (number == 202) return futexCall((int *)a1, (int)a2, (int)a3, (const LinuxTimespec *)a4);
     lock();
     unsigned i = 0;
     while (i < SYSCALL_RECORDS && syscall_records[i].calls && syscall_records[i].number != number) ++i;

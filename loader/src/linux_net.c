@@ -149,6 +149,7 @@ int linuxAbiSetsockopt(int fd, int level, int name, const void *value, unsigned 
     int handle, error = 0, native_level, native_name;
     if (!lookup(fd, &handle)) return -1;
     if (level == LINUX_SOL_SOCKET && (name == LINUX_SO_RCVTIMEO || name == LINUX_SO_SNDTIMEO)) return 0;  // timeouts are done with poll
+    if (level == 0) return linuxNetNativeIpOption(handle, name, value, length, &error) < 0 ? fail(error) : 0;  // IPPROTO_IP
     if (!linuxNetOptionToNative(level, name, &native_level, &native_name)) {
         trace("net.setsockopt=UNSUPPORTED level=%d name=%d", level, name);
         return fail(LINUX_ENOPROTOOPT);
