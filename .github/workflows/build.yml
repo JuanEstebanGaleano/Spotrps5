@@ -24,6 +24,16 @@ jobs:
           docker build -t ps5env:ci -f buildenv/docker/Dockerfile buildenv
           echo "IMAGE=ps5env:ci" >> "$GITHUB_ENV"
 
+      # librespot (patched, built by the librespot workflow) is bundled into the title.
+      - name: Fetch the librespot binary
+        run: |
+          set -euo pipefail
+          git fetch --depth 1 origin ci-reports
+          mkdir -p private
+          git show origin/ci-reports:librespot-linux-x86_64 > private/librespot
+          test -s private/librespot
+          ls -l private/librespot
+
       - name: Build the title and its image
         run: |
           set -o pipefail

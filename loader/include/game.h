@@ -5,6 +5,8 @@
 #pragma once
 #include "linux_dl.h"
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 typedef struct {
     const char *root;         // native folder the client sees as "/" (its install is /game, temporary files /tmp, home /home/ps5)
@@ -17,6 +19,9 @@ typedef struct {
     unsigned timeout_seconds;      // 0: wait for ever
     const LinuxVirtualLibrary *virtual_libraries;  // SDL3, EGL, GLX, OpenAL, GTK (PS5); none on a PC
     unsigned virtual_count;
+    // Spotrps5: what the program writes to stdout (librespot's pipe backend writes raw PCM there). NULL: stdout is logged as text.
+    int64_t (*stdout_sink)(void *context, const void *bytes, size_t count);
+    void *stdout_context;
 } GameConfig;
 
 // Runs the official PokeMMO client (its `main`) inside the adapters and waits for it. True when main returned 0 or exit(0) was called.

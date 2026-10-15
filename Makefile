@@ -7,6 +7,8 @@ SHELL := bash
 LOADER_TITLE_ID ?= PPSA98001
 # Spotrps5's own title (a different id, so it installs next to PokeMMO Prospero).
 SPOTIFY_TITLE_ID ?= PPSA98077
+# The librespot binary built and patched by .github/workflows/librespot.yml (branch ci-reports): bundled into the title.
+LIBRESPOT_BIN ?= private/librespot
 # Optional: your PC's LAN address; the loader also sends its UDP log there (it always broadcasts too; tools/udplog.py receives it).
 # PROBE_LOG_HOST, its old name, still works.
 LOG_HOST ?= $(PROBE_LOG_HOST)
@@ -49,6 +51,8 @@ spotify: env-check
 	@rm -rf build/spotify-assets && mkdir -p build/spotify-assets
 	@if [[ -n "$(LOG_HOST)" ]]; then echo "$(LOG_HOST)" > build/spotify-assets/loghost.txt; \
 	 else echo "(no LOG_HOST: UDP broadcast only)" > build/spotify-assets/README.txt; fi
+	@if [[ -f "$(LIBRESPOT_BIN)" ]]; then cp "$(LIBRESPOT_BIN)" build/spotify-assets/librespot; \
+	 else echo "warning: no librespot at $(LIBRESPOT_BIN): the title is built without it"; fi
 	bash scripts/build-title.sh --title-id $(SPOTIFY_TITLE_ID) --name "Spotrps5" \
 		--sources loader/src --sources loader/platform/ps5 --sources loader/platform/spotify --include loader/include --zlib \
 		--assets build/spotify-assets --content-suffix SPOTRPS5 --download-mib 512 \

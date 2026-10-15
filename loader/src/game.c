@@ -37,6 +37,8 @@ static struct {
 } run;
 static ElfExecutable mapped;
 static const char *failure = "";
+static int64_t (*stdout_sink)(void *context, const void *bytes, size_t count);
+static void *stdout_context;
 static LinuxRuntimeExport exports[ELF_EXPORT_MAX];
 
 // ---- the client's stdout/stderr: whole lines go to the log ----------------------------------------------------------------------
@@ -53,6 +55,7 @@ static int64_t sink(void *context, int fd, const void *bytes, size_t count, int 
         *error = LINUX_EBADF;
         return -1;
     }
+    if (fd == 1 && stdout_sink) return stdout_sink(stdout_context, bytes, count);
     while (atomic_flag_test_and_set_explicit(&capture_lock, memory_order_acquire)) linuxThreadYield();
     const unsigned char *p = bytes;
     for (size_t i = 0; i < count; ++i) {
@@ -121,6 +124,8 @@ bool gameRun(const GameConfig *config) {
     failure = "";
     memset(&run, 0, sizeof(run));
     memset(pending_bytes, 0, sizeof(pending_bytes));
+    stdout_sink = config->stdout_sink;
+    stdout_context = config->stdout_context;
     linuxStdioSetConsoleSink(sink, NULL);
     linuxRuntimeReset();
     linuxTrapReset();
