@@ -18,6 +18,8 @@
 #include <netinet/in.h>
 #include <pthread.h>
 #include <pthread_np.h>
+#include <setjmp.h>
+#include <signal.h>
 #include <sched.h>
 #include <stdarg.h>
 #include <stddef.h>
@@ -50,6 +52,75 @@ int sceNetResolverDestroy(int resolver);
 #define LOG_PORT 18194
 
 const char *platformName(void) { return "ps5"; }
+
+// ---- thread pointer (%gs) -----------------------------------------------------------------------------------------------------------
+// The program the loader runs keeps its thread-local storage behind %gs (the system's libthr owns %fs). Two ways to set the base of %gs
+// are tried, the first that works is remembered: the kernel call sysarch(AMD64_SET_GSBASE) when the title can reach it, else the
+// wrgsbase instruction (needs the kernel to have enabled FSGSBASE). Each attempt runs under a fault guard and is verified by reading
+// gs:0 back, where the caller keeps a pointer to the block itself.
+int sysarch(int number, void *argument) __attribute__((weak));
+#define AMD64_SET_GSBASE 131
+static __thread sigjmp_buf gs_jump;
+static __thread volatile sig_atomic_t gs_armed;
+static _Atomic int gs_method;  // 0 not decided yet, 1 sysarch, 2 wrgsbase, -1 neither works
+static const char *gs_notes = "not tried";
+static void gsFault(int signal_number) {
+    (void)signal_number;
+    if (gs_armed) siglongjmp(gs_jump, 1);
+}
+static bool gsReadsBack(void *pointer) {
+    void *value = NULL;
+    __asm__ volatile("movq %%gs:0, %0" : "=r"(value));
+    return value == pointer;
+}
+static bool gsTry(int method, void *pointer) {
+    struct sigaction guard, old_ill, old_segv;
+    memset(&guard, 0, sizeof(guard));
+    guard.sa_handler = gsFault;
+    sigemptyset(&guard.sa_mask);
+    guard.sa_flags = SA_NODEFER;
+    sigaction(SIGILL, &guard, &old_ill);
+    sigaction(SIGSEGV, &guard, &old_segv);
+    bool ok = false;
+    if (!sigsetjmp(gs_jump, 1)) {
+        gs_armed = 1;
+        if (method == 1) {
+            void *argument = pointer;
+            ok = sysarch && sysarch(AMD64_SET_GSBASE, &argument) == 0 && gsReadsBack(pointer);
+        } else {
+            __asm__ volatile(".byte 0xf3, 0x48, 0x0f, 0xae, 0xd8" ::"a"(pointer));  // wrgsbase %rax
+            ok = gsReadsBack(pointer);
+        }
+    }
+    gs_armed = 0;
+    sigaction(SIGILL, &old_ill, NULL);
+    sigaction(SIGSEGV, &old_segv, NULL);
+    return ok;
+}
+bool platformSetThreadPointer(void *pointer) {
+    int method = atomic_load(&gs_method);
+    if (method < 0) return false;
+    if (method == 0) {
+        bool has_sysarch = sysarch != NULL;
+        if (gsTry(1, pointer)) {
+            method = 1;
+            gs_notes = "sysarch(AMD64_SET_GSBASE)";
+        } else if (gsTry(2, pointer)) {
+            method = 2;
+            gs_notes = "wrgsbase";
+        } else {
+            method = -1;
+            gs_notes = has_sysarch ? "neither sysarch nor wrgsbase works" : "no sysarch in libkernel, and wrgsbase is refused";
+        }
+        atomic_store(&gs_method, method);
+        char line[160];
+        snprintf(line, sizeof(line), "tls: thread pointer (%%gs): %s", gs_notes);
+        platformLogLine(line);
+        return method > 0;
+    }
+    return method == 1 ? gsTry(1, pointer) : gsTry(2, pointer);
+}
+const char *platformThreadPointerNote(void) { return gs_notes; }
 
 // ---- logging --------------------------------------------------------------------------------------------------------------------
 static pthread_mutex_t log_lock = PTHREAD_MUTEX_INITIALIZER;

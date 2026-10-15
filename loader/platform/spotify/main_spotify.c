@@ -10,6 +10,7 @@
 #include "prospero_version.h"  // PROSPERO_RELEASE, PROSPERO_TITLE_ID (generated at build time)
 #include <EGL/egl.h>
 #include <GL/gl.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdatomic.h>
@@ -21,7 +22,7 @@ const size_t ps5_opengl_heap_size = 768u << 20;
 
 int sceKernelUsleep(unsigned int microseconds);
 
-#define MILESTONE "spotrps5-1"
+#define MILESTONE "spotrps5-2a"
 
 static EGLDisplay display = EGL_NO_DISPLAY;
 static EGLSurface surface = EGL_NO_SURFACE;
@@ -45,6 +46,22 @@ static bool screenOpen(void) {
     return true;
 }
 
+// Milestone 2 probe: can a title point %gs at a block of its own? (The loader needs it for programs written in Rust.) Done on a thread of
+// its own so that the result is the same one the loader will get on the threads it starts.
+static _Atomic int tls_result;  // 0 running, 1 works, 2 does not
+static void *tlsProbe(void *argument) {
+    (void)argument;
+    static unsigned char block[256] __attribute__((aligned(64)));
+    void *pointer = block + 64;
+    *(void **)pointer = pointer;  // gs:0 holds the block's own address
+    bool ok = platformSetThreadPointer(pointer);
+    void *read_back = NULL;
+    if (ok) __asm__ volatile("movq %%gs:0, %0" : "=r"(read_back));
+    diagnosticsTrace("tls.probe ok=%d read_back=%p expected=%p method=%s", ok, read_back, pointer, platformThreadPointerNote());
+    atomic_store(&tls_result, ok && read_back == pointer ? 1 : 2);
+    return NULL;
+}
+
 static void drawScreen(const char *address, unsigned frame) {
     if (!overlayBegin((unsigned)width, (unsigned)height)) {  // no overlay: a plain colour so that something shows
         glViewport(0, 0, width, height);
@@ -58,11 +75,15 @@ static void drawScreen(const char *address, unsigned frame) {
     overlayTextCentered(OVERLAY_WIDTH / 2, 450, "Spotify Connect para PS5", 40, 0xFFFFFFFF);
     static const char *const dots[] = {"", ".", "..", "..."};
     char line[160];
-    snprintf(line, sizeof(line), "Hito 1: el titulo arranca%s", dots[(frame / 30) % 4]);
+    snprintf(line, sizeof(line), "Hito 2: prueba de la consola%s", dots[(frame / 30) % 4]);
     overlayTextCentered(OVERLAY_WIDTH / 2, 560, line, 36, 0xE8E8E8FF);
     overlayTextCentered(OVERLAY_WIDTH / 2, 620, "librespot todavia no esta incluido", 30, 0xA0A0A0FF);
     snprintf(line, sizeof(line), "IP de la consola: %s", address);
     overlayTextCentered(OVERLAY_WIDTH / 2, 760, line, 30, 0xA0A0A0FF);
+    int probe = atomic_load(&tls_result);
+    snprintf(line, sizeof(line), "Prueba de hilos (%%gs): %s%s%s", probe == 0 ? "comprobando" : probe == 1 ? "FUNCIONA, via " : "NO FUNCIONA: ",
+             probe == 0 ? "" : platformThreadPointerNote(), "");
+    overlayTextCentered(OVERLAY_WIDTH / 2, 820, line, 30, probe == 1 ? 0x1DB954FF : probe == 2 ? 0xFF6060FF : 0xA0A0A0FF);
     snprintf(line, sizeof(line), "v%s (%s)  -  Circulo: salir", PROSPERO_RELEASE, MILESTONE);
     overlayText(40, OVERLAY_HEIGHT - 60, line, 26, 0x707070FF);
     overlayEnd();
@@ -76,6 +97,8 @@ int main(void) {
     char address[16];
     if (!platformLocalIPv4(address)) snprintf(address, sizeof(address), "?");
     diagnosticsTrace("network: local address %s", address);
+    pthread_t probe_thread;
+    if (pthread_create(&probe_thread, NULL, tlsProbe, NULL)) atomic_store(&tls_result, 2);
     for (unsigned frame = 1;; ++frame) {
         if (screen) {
             drawScreen(address, frame);

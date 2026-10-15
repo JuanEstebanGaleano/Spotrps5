@@ -47,6 +47,7 @@ void platformFreePages(void *address, size_t bytes);
 // ---- thread pointer ---------------------------------------------------------------------------------------------------------------
 // Points %gs of the calling thread at `pointer` (the system keeps %fs for itself). False when the system will not let a title do it.
 bool platformSetThreadPointer(void *pointer);
+const char *platformThreadPointerNote(void);  // how it was done, or why not (for the screen and the log)
 
 // ---- threads --------------------------------------------------------------------------------------------------------------------
 // The calling thread's stack: lowest address and size (the guard is excluded when known).
