@@ -57,6 +57,12 @@ bool elfStageImage(const char *path, ElfImage *image, uintptr_t target_address, 
         goto done;
     for (unsigned i = 0; i < h.e_phnum; ++i) {
         Elf64_Phdr *p = &programs[i];
+        if (p->p_type == PT_TLS && !options->library) {
+            image->tls_vaddr = p->p_vaddr;
+            image->tls_file_bytes = p->p_filesz;
+            image->tls_memory_bytes = p->p_memsz;
+            image->tls_alignment = p->p_align ? p->p_align : 1;
+        }
         if (p->p_type != PT_LOAD) continue;
         if (p->p_filesz > p->p_memsz || p->p_memsz > UINT64_MAX - p->p_vaddr || p->p_offset > (uint64_t)size || p->p_filesz > (uint64_t)size - p->p_offset)
             goto done;

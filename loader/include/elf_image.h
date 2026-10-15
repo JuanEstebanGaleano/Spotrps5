@@ -39,6 +39,8 @@ typedef struct {
     char needed[ELF_NEEDED_MAX][ELF_NEEDED_NAME_MAX];
     unsigned needed_count;
     uint32_t tls_relocations;
+    // The program's own PT_TLS segment (not for libraries): where its initial image is, how much of it, the whole block, alignment.
+    uint64_t tls_vaddr, tls_file_bytes, tls_memory_bytes, tls_alignment;
     bool owns_memory;
 } ElfImage;
 

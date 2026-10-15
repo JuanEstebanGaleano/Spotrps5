@@ -91,3 +91,49 @@ bool linuxTlsReset(void) {
     return true;
 }
 unsigned linuxTlsModuleCount(void) { return atomic_load(&module_count); }
+
+// ---- the program's own block (%gs) ---------------------------------------------------------------------------------------------------
+#define TCB_BYTES 0x100u
+static struct {
+    unsigned char *image;
+    size_t file_bytes, memory_bytes, alignment;
+} program;
+static __thread void *program_block;  // what malloc returned for this thread's block
+void linuxTlsSetProgram(const void *image, size_t file_bytes, size_t memory_bytes, size_t alignment) {
+    free(program.image);
+    program.image = NULL;
+    program.file_bytes = file_bytes;
+    program.memory_bytes = memory_bytes;
+    program.alignment = alignment ? alignment : 1;
+    if (file_bytes && (program.image = malloc(file_bytes))) memcpy(program.image, image, file_bytes);
+    diagnosticsTrace("tls.program file=%zu memory=%zu alignment=%zu", file_bytes, memory_bytes, alignment);
+}
+bool linuxTlsThreadStart(void) {
+    if (!program.memory_bytes) return false;
+    // The linker places the program's variables at fixed distances below the thread pointer: the data starts exactly
+    // round_up(memory_bytes, alignment) below it. The thread pointer itself is also kept 64-byte aligned.
+    size_t align = program.alignment, block = (program.memory_bytes + align - 1) & ~(align - 1);
+    size_t below = (block + 63u) & ~(size_t)63u;
+    unsigned char *raw = calloc(1, below + TCB_BYTES + 64u);
+    if (!raw) return false;
+    unsigned char *base = (unsigned char *)(((uintptr_t)raw + 63u) & ~(uintptr_t)63u);
+    unsigned char *pointer = base + below;  // the thread pointer
+    unsigned char *start = pointer - block;  // where the program's TLS data begins
+    if (program.file_bytes) memcpy(start, program.image, program.file_bytes);
+    uint64_t canary;
+    platformRandom(&canary, sizeof(canary));
+    canary &= ~0xffull;  // like glibc: the low byte is zero
+    memcpy(pointer, &pointer, sizeof(pointer));          // gs:0 (tcb)
+    memcpy(pointer + 0x10, &pointer, sizeof(pointer));   // gs:0x10 (self)
+    memcpy(pointer + 0x28, &canary, sizeof(canary));     // gs:0x28 (stack protector)
+    if (!platformSetThreadPointer(pointer)) {
+        free(raw);
+        return false;
+    }
+    program_block = raw;
+    return true;
+}
+void linuxTlsThreadEnd(void) {
+    free(program_block);
+    program_block = NULL;
+}

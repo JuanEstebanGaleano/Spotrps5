@@ -120,6 +120,11 @@ bool linuxRuntimeGetThreadName(LinuxPthread thread, char out[LINUX_THREAD_NAME_M
 int linuxRuntimeSigemptyset(LinuxSigset *set);
 int linuxRuntimeSigaddset(LinuxSigset *set, int signal);
 int linuxRuntimeSigprocmask(int how, const LinuxSigset *set, LinuxSigset *old);
+struct LinuxStackTag;
+int linuxRuntimeSigaltstack(const void *stack, void *old);
+int linuxRuntimeSetenv(const char *name, const char *value, int overwrite);
+int linuxRuntimeUnsetenv(const char *name);
+uintptr_t linuxRuntimeSignal(int signal, uintptr_t handler);
 int linuxRuntimeSigaction(int signal, const LinuxSigaction *action, LinuxSigaction *old);
 
 // Memory remapping: no operation is supported. MREMAP_DONTUNMAP reports EINVAL like a kernel before 5.7.

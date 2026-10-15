@@ -27,6 +27,8 @@
 
 const char *platformName(void) { return "host"; }
 
+bool platformSetThreadPointer(void *pointer) { return syscall(SYS_arch_prctl, 0x1001 /* ARCH_SET_GS */, pointer) == 0; }
+
 static pthread_mutex_t log_lock = PTHREAD_MUTEX_INITIALIZER;
 static FILE *log_file;
 void platformLogLine(const char *line) {

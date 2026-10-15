@@ -84,6 +84,41 @@ void linuxRuntimeInitialize(void) {
     }
     unlock();
 }
+// setenv/unsetenv (Spotrps5): the table is rebuilt whole (it is small and fixed in size).
+static int changeEnvironment(const char *name, const char *value, bool overwrite) {
+    linuxRuntimeInitialize();
+    if (!name || !*name || strchr(name, '=') || (value && strlen(name) + strlen(value) + 2 > 1024)) return fail(LINUX_EINVAL);
+    size_t length = strlen(name);
+    char fresh[1024];
+    if (value) snprintf(fresh, sizeof(fresh), "%s=%s", name, value);
+    const char *list[LINUX_ENV_MAX_ENTRIES + 1];
+    size_t count = 0;
+    bool found = false;
+    lock();
+    for (char **entry = linuxRuntimeEnviron; entry && *entry && count < LINUX_ENV_MAX_ENTRIES; ++entry) {
+        bool same = !strncmp(*entry, name, length) && (*entry)[length] == '=';
+        if (!same)
+            list[count++] = *entry;
+        else {
+            found = true;
+            if (!value)
+                continue;  // unsetenv: leave it out
+            list[count++] = overwrite ? fresh : *entry;
+        }
+    }
+    if (value && !found) {
+        if (count >= LINUX_ENV_MAX_ENTRIES) {
+            unlock();
+            return fail(LINUX_ENOMEM);
+        }
+        list[count++] = fresh;
+    }
+    bool ok = storeEnvironment(list, count);
+    unlock();
+    return ok ? 0 : fail(LINUX_ENOMEM);
+}
+int linuxRuntimeSetenv(const char *name, const char *value, int overwrite) { return value ? changeEnvironment(name, value, overwrite != 0) : fail(LINUX_EINVAL); }
+int linuxRuntimeUnsetenv(const char *name) { return changeEnvironment(name, NULL, true); }
 char *linuxRuntimeGetenv(const char *name) {
     linuxRuntimeInitialize();
     if (!name || !*name || strchr(name, '=')) return NULL;
@@ -607,6 +642,31 @@ int linuxRuntimeSigaction(int signal, const LinuxSigaction *action, LinuxSigacti
     if (action) dispositions[signal] = next;
     unlock();
     if (old) *old = previous;
+    return 0;
+}
+
+// signal(): the older interface to sigaction. Returns the previous handler, or SIG_ERR (-1) with errno set.
+uintptr_t linuxRuntimeSignal(int signal, uintptr_t handler) {
+    LinuxSigaction action, old;
+    memset(&action, 0, sizeof(action));
+    action.handler = handler;
+    action.flags = 0x10000000;  // SA_RESTART
+    if (linuxRuntimeSigaction(signal, &action, &old)) return (uintptr_t)-1;
+    return (uintptr_t)old.handler;
+}
+
+// sigaltstack: signals are not delivered to the guest's handlers here, so an alternate stack is accepted and never used.
+typedef struct {
+    void *sp;
+    int flags, pad;
+    size_t size;
+} LinuxStack;  // stack_t, 24 bytes
+_Static_assert(sizeof(LinuxStack) == 24, "glibc x86-64 stack_t");
+int linuxRuntimeSigaltstack(const void *stack_in, void *old_in) {
+    const LinuxStack *stack = stack_in;
+    LinuxStack *old = old_in;
+    if (old) *old = (LinuxStack){.flags = 2 /* SS_DISABLE */};
+    (void)stack;
     return 0;
 }
 

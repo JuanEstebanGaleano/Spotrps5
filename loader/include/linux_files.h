@@ -35,6 +35,8 @@ bool linuxFilesAddMount(const char *guest, const char *native);
 bool linuxFilesReset(void);
 int linuxAbiOpen(const char *path, int flags, ...);
 int linuxAbiClose(int fd);
+int linuxAbiDup(int fd);
+int linuxAbiDup2(int fd, int target);
 int64_t linuxAbiRead(int fd, void *buffer, size_t count);
 int64_t linuxAbiWrite(int fd, const void *buffer, size_t count);
 int64_t linuxAbiLseek(int fd, int64_t offset, int whence);

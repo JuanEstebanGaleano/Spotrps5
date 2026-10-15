@@ -103,6 +103,12 @@ static bool openImage(const char *path, ElfExecutable *mapped, ElfImportResolver
     mapped->weak_null = staged.weak_null;
     uintptr_t bias = (uintptr_t)base - layout->minimum_vaddr;
     mapped->main_address = staged.main_vaddr ? bias + staged.main_vaddr : 0;
+    if (!library && staged.tls_memory_bytes) {
+        mapped->tls_address = bias + staged.tls_vaddr;
+        mapped->tls_file_bytes = (size_t)staged.tls_file_bytes;
+        mapped->tls_memory_bytes = (size_t)staged.tls_memory_bytes;
+        mapped->tls_alignment = (size_t)staged.tls_alignment;
+    }
     if (library) {
         mapped->symtab = staged.symtab_vaddr ? bias + staged.symtab_vaddr : 0;
         mapped->strtab = staged.strtab_vaddr ? bias + staged.strtab_vaddr : 0;

@@ -174,6 +174,7 @@ static int64_t linuxAbiTime(int64_t *result) {
     return value.seconds;
 }
 
+#include "linux_spotrps5.h"
 #include "linux_zlib.h"
 #include <zlib.h>
 typedef struct {
@@ -232,17 +233,20 @@ static const Binding bindings[] = {
     BIND("getauxval", linuxRuntimeGetauxval), BINDV("dlclose", linuxRuntimeDlclose, "GLIBC_2.34"), BINDV("dlerror", linuxRuntimeDlerror, "GLIBC_2.34"),
     BIND("dl_iterate_phdr", linuxRuntimeDlIteratePhdr), BINDV("dladdr", linuxRuntimeDladdr, "GLIBC_2.34"), BIND("readlink", linuxRuntimeReadlink),
     BIND("__libc_current_sigrtmax", linuxRuntimeSigrtmax), BIND("syscall", linuxRuntimeSyscall), BIND("setlocale", linuxRuntimeSetlocale),
-    BIND("getenv", linuxRuntimeGetenv), BIND("getuid", linuxRuntimeGetuid), BIND("getpwuid_r", linuxRuntimeGetpwuidR), BIND("uname", linuxRuntimeUname),
+    BIND("getenv", linuxRuntimeGetenv), BIND("setenv", linuxRuntimeSetenv), BIND("unsetenv", linuxRuntimeUnsetenv), BIND("getuid", linuxRuntimeGetuid), BIND("getpwuid_r", linuxRuntimeGetpwuidR), BIND("uname", linuxRuntimeUname),
     BIND("getrlimit", linuxRuntimeGetrlimit), BIND("getrlimit64", linuxRuntimeGetrlimit), BIND("setrlimit", linuxRuntimeSetrlimit),
     BIND("strerror_r", linuxRuntimeStrerrorR), BIND("__xpg_strerror_r", linuxRuntimeXpgStrerrorR), BIND("realpath", linuxRuntimeRealpath),
     BINDV("pthread_setname_np", linuxRuntimeSetThreadName, "GLIBC_2.34"), BIND("sigemptyset", linuxRuntimeSigemptyset),
-    BIND("sigaddset", linuxRuntimeSigaddset), BIND("sigprocmask", linuxRuntimeSigprocmask), BIND("sigaction", linuxRuntimeSigaction),
+    BIND("sigaddset", linuxRuntimeSigaddset), BIND("sigprocmask", linuxRuntimeSigprocmask), BIND("sigaction", linuxRuntimeSigaction), BIND("signal", linuxRuntimeSignal), BIND("sigaltstack", linuxRuntimeSigaltstack),
+    BIND("dup", linuxAbiDup), BIND("dup2", linuxAbiDup2),
     BIND("exit", linuxRuntimeExit), BIND("_exit", linuxRuntimeExitImmediate), BIND("abort", linuxRuntimeAbort),
     BIND("__stack_chk_fail", linuxRuntimeStackCheckFail), BIND("mremap", linuxRuntimeMremap), BINDV("dlopen", linuxRuntimeDlopen, "GLIBC_2.34"),
     BINDV("dlsym", linuxRuntimeDlsym, "GLIBC_2.34"),
     // ---- run-time libraries (LWJGL, libgdx, FreeType, the C++ runtime): libm, fortify, locale, wide characters, time, threads
     BIND("sin", sin), BIND("cos", cos), BIND("cosf", cosf), BIND("exp", exp), BIND("fmod", fmod), BIND("frexp", frexp), BIND("frexpl", frexpl),
-    BIND("ldexp", ldexp), BIND("log", log), BIND("pow", pow), BIND("powf", powf), BIND("sqrt", sqrt), BIND("sqrtf", sqrtf), BIND("acos", acos),
+    BIND("ldexp", ldexp), BIND("log", log), BIND("pow", pow), BIND("powf", powf), BIND("sqrt", sqrt), BIND("atan", atan), BIND("exp2", exp2), BIND("expf", expf), BIND("log10", log10), BIND("bcmp", memcmp),
+    BIND("sendmsg", linuxAbiSendmsg), BIND("recvmsg", linuxAbiRecvmsg), BIND("readv", linuxAbiReadv), BIND("writev", linuxAbiWritev),
+    BIND("getifaddrs", linuxAbiGetifaddrs), BIND("freeifaddrs", linuxAbiFreeifaddrs), BIND("if_nametoindex", linuxAbiIfNameToIndex), BIND("sqrtf", sqrtf), BIND("acos", acos),
     BIND("sincos", linuxExtraSincos), BIND("__snprintf_chk", linuxExtraSnprintfChk), BIND("__vsnprintf_chk", linuxExtraVsnprintfChk),
     BIND("sprintf", linuxExtraSprintf), BIND("__sprintf_chk", linuxExtraSprintfChk), BIND("__fprintf_chk", linuxExtraFprintfChk),
     BIND("printf", linuxExtraPrintf), BIND("__printf_chk", linuxExtraPrintfChk), BIND("puts", linuxExtraPuts), BIND("__memcpy_chk", linuxExtraMemcpyChk),
@@ -290,7 +294,7 @@ static const Binding bindings[] = {
     BIND("statfs", linuxExtraRefuseNosys), BIND("statvfs", linuxExtraRefuseNosys), BIND("fstatfs", linuxExtraRefuseNosys),
     BIND("memfd_create", linuxExtraRefuseNosys), BIND("ioctl", linuxAbiIoctl),
     // ---- sockets (linux_net.c): IPv4 over the BSD service
-    BIND("msync", linuxAbiMsync), BIND("eventfd", linuxAbiEventfd), BIND("pipe", linuxAbiPipe), BIND("pipe2", linuxAbiPipe2),
+    BIND("msync", linuxAbiMsync), BIND("eventfd", linuxAbiEventfd), BIND("pipe", linuxAbiPipe), BIND("socketpair", linuxAbiSocketpair), BIND("pipe2", linuxAbiPipe2),
     BIND("epoll_create", linuxAbiEpollCreate), BIND("epoll_create1", linuxAbiEpollCreate1), BIND("epoll_ctl", linuxAbiEpollCtl),
     BIND("epoll_wait", linuxAbiEpollWait), BIND("epoll_pwait", linuxAbiEpollPwait), BIND("gethostname", linuxAbiGethostname), BIND("socket", linuxAbiSocket),
     BIND("connect", linuxAbiConnect), BIND("bind", linuxAbiBind), BIND("listen", linuxAbiListen), BIND("accept", linuxAbiAccept),

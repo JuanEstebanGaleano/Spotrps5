@@ -373,7 +373,7 @@ enum {
     VIRTUAL_PIPE = LINUX_VFD_PIPE,
     VIRTUAL_EPOLL = LINUX_VFD_EPOLL
 };
-#define IN_MEMORY_KIND(kind) ((kind) >= LINUX_VFD_EVENTFD && (kind) <= LINUX_VFD_EPOLL)
+#define IN_MEMORY_KIND(kind) ((kind) >= LINUX_VFD_EVENTFD && (kind) <= LINUX_VFD_SOCKPAIR)
 #define VIRTUAL_MARK '\x01'
 static int virtualKind(const char *normalized) {
     if (!strcmp(normalized, "/dev")) return VIRTUAL_DIR;
@@ -959,6 +959,63 @@ typedef struct {
     int32_t padding;
 } LinuxFlock;  // x86-64 struct flock (same as AArch64)
 _Static_assert(sizeof(LinuxFlock) == 32 && offsetof(LinuxFlock, start) == 8 && offsetof(LinuxFlock, pid) == 24, "x86-64 flock layout");
+// dup: another slot for the same open file or in-memory object (Spotrps5). Files share the native handle (closeRecord closes it with the
+// last descriptor); eventfd, pipe and epoll objects are reference counted in linux_vfd.c. Sockets are not duplicated.
+static int duplicateInto(Descriptor *source, unsigned first_index, unsigned only_index, bool cloexec) {
+    unsigned index = only_index != UINT_MAX ? only_index : first_index;
+    if (only_index == UINT_MAX)
+        while (index < LINUX_FILE_MAX_DESCRIPTORS && descriptors[index].active) ++index;
+    if (index >= LINUX_FILE_MAX_DESCRIPTORS) return -LINUX_EMFILE;
+    if (!next_generation) return -LINUX_EOVERFLOW;
+    if (source->virtual_kind == VIRTUAL_SOCKET) return -LINUX_ENOSYS;
+    if (IN_MEMORY_KIND(source->virtual_kind)) linuxVfdRetain(source->virtual_kind, source->native, source->flags & 3);
+    Descriptor copy = *source;
+    copy.generation = next_generation++;
+    if (cloexec)
+        copy.flags |= LINUX_O_CLOEXEC;
+    else
+        copy.flags &= ~LINUX_O_CLOEXEC;
+    descriptors[index] = copy;
+    return (int)index + 3;
+}
+int linuxAbiDup(int fd) {
+    linuxSyncLock();
+    Descriptor *d = get(fd);
+    if (!d) return finish(LINUX_EBADF);
+    int result = duplicateInto(d, 0, UINT_MAX, false);
+    return result < 0 ? finish(-result) : (linuxSyncUnlock(), result);
+}
+int linuxAbiDup2(int fd, int target) {
+    if (fd == target) {
+        linuxSyncLock();
+        bool open = get(fd) != NULL || (fd >= 0 && fd <= 2);
+        return open ? (linuxSyncUnlock(), target) : finish(LINUX_EBADF);
+    }
+    if (target >= 0 && target <= 2) {  // the standard streams are the console's: nothing to replace
+        linuxSyncLock();
+        bool open = get(fd) != NULL;
+        return open ? (linuxSyncUnlock(), target) : finish(LINUX_EBADF);
+    }
+    if (target < 3 || (unsigned)(target - 3) >= LINUX_FILE_MAX_DESCRIPTORS) return fail(LINUX_EBADF);
+    linuxSyncLock();
+    Descriptor *d = get(fd);
+    if (!d) return finish(LINUX_EBADF);
+    if (descriptors[target - 3].active) {
+        Descriptor *old = &descriptors[target - 3];
+        // Close the one being replaced (same bookkeeping as close()).
+        int error = closeRecord(old);
+        int vfd_kind = pending_vfd_kind, vfd_object = pending_vfd_object, vfd_access = pending_vfd_access, socket_handle = pending_socket_close;
+        pending_vfd_object = -1;
+        pending_socket_close = -1;
+        if (error) return finish(error);
+        if (socket_handle >= 0) linuxNetNativeClose(socket_handle);
+        if (vfd_object >= 0) linuxVfdRelease(vfd_kind, vfd_object, vfd_access);
+        d = get(fd);
+        if (!d) return finish(LINUX_EBADF);
+    }
+    int result = duplicateInto(d, 0, (unsigned)(target - 3), false);
+    return result < 0 ? finish(-result) : (linuxSyncUnlock(), result);
+}
 int linuxAbiFcntl(int fd, int command, ...) {
     intptr_t argument = 0;  // pointer-sized: struct flock pointers travel through the variadic slot
     {
@@ -969,6 +1026,11 @@ int linuxAbiFcntl(int fd, int command, ...) {
     }
     linuxSyncLock();
     Descriptor *d = get(fd);
+    if (!d && fd >= 0 && fd <= 2 && (command == LINUX_F_GETFD || command == LINUX_F_GETFL)) {
+        // Spotrps5: the standard streams are not in this table (the console sink takes their writes), but a program that checks
+        // them at start (Rust's runtime does, with fcntl) must find them open: it would otherwise open /dev/null and dup them.
+        return finish(0) < 0 ? -1 : (command == LINUX_F_GETFL ? (fd == 0 ? 0 : 1) : 0);
+    }
     if (!d) return finish(LINUX_EBADF);
     int result = 0;
     switch (command) {
@@ -1004,7 +1066,11 @@ int linuxAbiFcntl(int fd, int command, ...) {
             if (!argument) return finish(LINUX_EFAULT);
             break;
         case LINUX_F_DUPFD:
-        case LINUX_F_DUPFD_CLOEXEC: return finish(LINUX_ENOSYS);
+        case LINUX_F_DUPFD_CLOEXEC: {
+            unsigned minimum = argument > 3 ? (unsigned)(argument - 3) : 0;
+            int duplicated = duplicateInto(d, minimum, UINT_MAX, command == LINUX_F_DUPFD_CLOEXEC);
+            return duplicated < 0 ? finish(-duplicated) : (linuxSyncUnlock(), duplicated);
+        }
         default: return finish(LINUX_EINVAL);
     }
     linuxSyncUnlock();

@@ -227,11 +227,13 @@ static void entryWrapper(void *argument) {
     Record *record = argument;
     self_id = record->id;
     linuxThreadsCurrentStarted();
+    linuxTlsThreadStart();  // the program's own thread-local block (%gs), if it has one
     // exit()/abort() inside the entry unwind to here: the thread still runs its
     // TLS destructors and publishes a NULL result, so it can be joined normally.
     void *result = NULL;
     linuxRuntimeRun(record->entry, record->argument, &result);
     destructValues();
+    linuxTlsThreadEnd();
     lockRecords();
     record->result = result;
     record->exited = true;

@@ -24,11 +24,13 @@ typedef struct {
     bool used;
     uint64_t counter;
     bool semaphore;
+    unsigned refs;  // descriptors that refer to it (dup)
 } EventFd;
 typedef struct {
     bool used, read_open, write_open;
     unsigned char *data;
     size_t head, count;
+    unsigned read_refs, write_refs;  // descriptors on each end (dup)
 } Pipe;
 typedef struct {
     int fd;
@@ -39,7 +41,18 @@ typedef struct {
     bool used;
     Interest interest[MAX_INTEREST];
     unsigned count;
+    unsigned refs;  // descriptors that refer to it (dup)
 } Epoll;
+// Spotrps5: a connected pair of local stream sockets (socketpair), as two one-way pipes. The descriptor's object number is
+// pair*2 + endpoint; endpoint e writes into dir[e] and reads from dir[1-e]. dir[e].write_open means endpoint e is open, dir[e].read_open that
+// the other endpoint still reads.
+typedef struct {
+    bool used;
+    Pipe dir[2];
+    unsigned refs[2];
+} SockPair;
+static SockPair sockpairs[MAX_OBJECTS];
+#define BAD_OBJECT(kind, object) ((object) < 0 || (unsigned)(object) >= ((kind) == LINUX_VFD_SOCKPAIR ? 2 * MAX_OBJECTS : MAX_OBJECTS))
 static EventFd eventfds[MAX_OBJECTS];
 static Pipe pipes[MAX_OBJECTS];
 static Epoll epolls[MAX_OBJECTS];
@@ -55,7 +68,7 @@ static int createEventfd(unsigned long long initial, bool semaphore) {
     int index = -1;
     for (unsigned i = 0; i < MAX_OBJECTS && index < 0; ++i)
         if (!eventfds[i].used) index = (int)i;
-    if (index >= 0) eventfds[index] = (EventFd){.used = true, .counter = initial, .semaphore = semaphore};
+    if (index >= 0) eventfds[index] = (EventFd){.used = true, .counter = initial, .semaphore = semaphore, .refs = 1};
     linuxSyncUnlock();
     return index;
 }
@@ -64,12 +77,17 @@ static uint64_t nowMs(void) { return platformMonotonicNs() / 1000000ull; }
 static void sleepSlice(void) { sleepMs(1); }
 
 int64_t linuxVfdRead(int kind, int object, void *buffer, size_t count, bool nonblock, int *error) {
-    if (object < 0 || (unsigned)object >= MAX_OBJECTS) {
+    if (BAD_OBJECT(kind, object)) {
         *error = LINUX_EBADF;
         return -1;
     }
     for (;;) {
         linuxSyncLock();
+        Pipe *rx = NULL;
+        if (kind == LINUX_VFD_PIPE && pipes[object].used)
+            rx = &pipes[object];
+        else if (kind == LINUX_VFD_SOCKPAIR && sockpairs[object >> 1].used)
+            rx = &sockpairs[object >> 1].dir[1 - (object & 1)];
         if (kind == LINUX_VFD_EVENTFD && eventfds[object].used) {
             EventFd *event = &eventfds[object];
             if (count < 8) {
@@ -84,8 +102,8 @@ int64_t linuxVfdRead(int kind, int object, void *buffer, size_t count, bool nonb
                 linuxSyncUnlock();
                 return 8;
             }
-        } else if (kind == LINUX_VFD_PIPE && pipes[object].used) {
-            Pipe *pipe = &pipes[object];
+        } else if (rx) {
+            Pipe *pipe = rx;
             if (pipe->count) {
                 size_t take = count < pipe->count ? count : pipe->count;
                 for (size_t i = 0; i < take; ++i) ((unsigned char *)buffer)[i] = pipe->data[(pipe->head + i) % PIPE_BYTES];
@@ -113,13 +131,18 @@ int64_t linuxVfdRead(int kind, int object, void *buffer, size_t count, bool nonb
 }
 
 int64_t linuxVfdWrite(int kind, int object, const void *buffer, size_t count, bool nonblock, int *error) {
-    if (object < 0 || (unsigned)object >= MAX_OBJECTS) {
+    if (BAD_OBJECT(kind, object)) {
         *error = LINUX_EBADF;
         return -1;
     }
     size_t done = 0;
     for (;;) {
         linuxSyncLock();
+        Pipe *tx = NULL;
+        if (kind == LINUX_VFD_PIPE && pipes[object].used)
+            tx = &pipes[object];
+        else if (kind == LINUX_VFD_SOCKPAIR && sockpairs[object >> 1].used)
+            tx = &sockpairs[object >> 1].dir[object & 1];
         if (kind == LINUX_VFD_EVENTFD && eventfds[object].used) {
             EventFd *event = &eventfds[object];
             uint64_t value;
@@ -139,8 +162,8 @@ int64_t linuxVfdWrite(int kind, int object, const void *buffer, size_t count, bo
                 linuxSyncUnlock();
                 return 8;
             }
-        } else if (kind == LINUX_VFD_PIPE && pipes[object].used) {
-            Pipe *pipe = &pipes[object];
+        } else if (tx) {
+            Pipe *pipe = tx;
             if (!pipe->read_open) {
                 linuxSyncUnlock();
                 *error = LINUX_EPIPE;
@@ -173,22 +196,66 @@ int64_t linuxVfdWrite(int kind, int object, const void *buffer, size_t count, bo
     }
 }
 
-void linuxVfdRelease(int kind, int object, int access) {
-    if (object < 0 || (unsigned)object >= MAX_OBJECTS) return;
-    linuxSyncLock();
-    if (kind == LINUX_VFD_EVENTFD)
-        memset(&eventfds[object], 0, sizeof(eventfds[object]));
-    else if (kind == LINUX_VFD_EPOLL)
-        memset(&epolls[object], 0, sizeof(epolls[object]));
+// Another descriptor now refers to the object (dup): it lives until the last one is closed. The caller holds linuxSyncLock (the
+// descriptor table's lock, which also guards these objects).
+void linuxVfdRetain(int kind, int object, int access) {
+    if (BAD_OBJECT(kind, object)) return;
+    if (kind == LINUX_VFD_EVENTFD && eventfds[object].used)
+        ++eventfds[object].refs;
+    else if (kind == LINUX_VFD_EPOLL && epolls[object].used)
+        ++epolls[object].refs;
     else if (kind == LINUX_VFD_PIPE && pipes[object].used) {
-        Pipe *pipe = &pipes[object];
         if (access == 0)
-            pipe->read_open = false;
+            ++pipes[object].read_refs;
         else
-            pipe->write_open = false;
+            ++pipes[object].write_refs;
+    } else if (kind == LINUX_VFD_SOCKPAIR && sockpairs[object >> 1].used)
+        ++sockpairs[object >> 1].refs[object & 1];
+}
+
+void linuxVfdRelease(int kind, int object, int access) {
+    if (BAD_OBJECT(kind, object)) return;
+    linuxSyncLock();
+    if (kind == LINUX_VFD_EVENTFD) {
+        if (eventfds[object].refs > 1)
+            --eventfds[object].refs;
+        else
+            memset(&eventfds[object], 0, sizeof(eventfds[object]));
+    } else if (kind == LINUX_VFD_EPOLL) {
+        if (epolls[object].refs > 1)
+            --epolls[object].refs;
+        else
+            memset(&epolls[object], 0, sizeof(epolls[object]));
+    } else if (kind == LINUX_VFD_PIPE && pipes[object].used) {
+        Pipe *pipe = &pipes[object];
+        unsigned *refs = access == 0 ? &pipe->read_refs : &pipe->write_refs;
+        if (*refs > 1)
+            --*refs;
+        else {
+            *refs = 0;
+            if (access == 0)
+                pipe->read_open = false;
+            else
+                pipe->write_open = false;
+        }
         if (!pipe->read_open && !pipe->write_open) {
             free(pipe->data);
             memset(pipe, 0, sizeof(*pipe));
+        }
+    } else if (kind == LINUX_VFD_SOCKPAIR && sockpairs[object >> 1].used) {
+        SockPair *pair = &sockpairs[object >> 1];
+        unsigned end = (unsigned)object & 1;
+        if (pair->refs[end] > 1)
+            --pair->refs[end];
+        else {
+            pair->refs[end] = 0;
+            pair->dir[end].write_open = false;
+            pair->dir[1 - end].read_open = false;
+        }
+        if (!pair->refs[0] && !pair->refs[1]) {
+            free(pair->dir[0].data);
+            free(pair->dir[1].data);
+            memset(pair, 0, sizeof(*pair));
         }
     }
     linuxSyncUnlock();
@@ -197,7 +264,7 @@ void linuxVfdRelease(int kind, int object, int access) {
 // ---- waiting ----------------------------------------------------------------------------------------------------------------------
 // Which of the wanted events an in-memory descriptor has now (kind and object index as the descriptor table keeps them).
 static unsigned linuxVfdReady(int kind, int object, int access, unsigned wanted) {
-    if (object < 0 || (unsigned)object >= MAX_OBJECTS) return LINUX_POLLNVAL;
+    if (BAD_OBJECT(kind, object)) return LINUX_POLLNVAL;
     unsigned ready = 0;
     linuxSyncLock();
     if (kind == LINUX_VFD_EVENTFD && eventfds[object].used) {
@@ -212,6 +279,13 @@ static unsigned linuxVfdReady(int kind, int object, int access, unsigned wanted)
             if (pipe->count < PIPE_BYTES) ready |= LINUX_POLLOUT;
             if (!pipe->read_open) ready |= LINUX_POLLERR;
         }
+    } else if (kind == LINUX_VFD_SOCKPAIR && sockpairs[object >> 1].used) {
+        const SockPair *pair = &sockpairs[object >> 1];
+        const Pipe *in = &pair->dir[1 - (object & 1)], *out = &pair->dir[object & 1];
+        if (in->count) ready |= LINUX_POLLIN;
+        if (!in->write_open) ready |= LINUX_POLLIN | LINUX_POLLHUP;  // the other end closed: reads give end of file
+        if (out->count < PIPE_BYTES) ready |= LINUX_POLLOUT;
+        if (!out->read_open) ready |= LINUX_POLLERR;
     } else if (kind == LINUX_VFD_EPOLL && epolls[object].used) {
         // an epoll descriptor inside another is not supported: never ready
     } else
@@ -290,7 +364,7 @@ int linuxAbiPipe2(int descriptors[2], int flags) {
     for (unsigned i = 0; i < MAX_OBJECTS && object < 0; ++i)
         if (!pipes[i].used) object = (int)i;
     unsigned char *data = object >= 0 ? malloc(PIPE_BYTES) : NULL;
-    if (object >= 0 && data) pipes[object] = (Pipe){.used = true, .read_open = true, .write_open = true, .data = data};
+    if (object >= 0 && data) pipes[object] = (Pipe){.used = true, .read_open = true, .write_open = true, .data = data, .read_refs = 1, .write_refs = 1};
     linuxSyncUnlock();
     if (object < 0 || !data) {
         free(data);
@@ -314,6 +388,45 @@ int linuxAbiPipe2(int descriptors[2], int flags) {
 }
 int linuxAbiPipe(int descriptors[2]) { return linuxAbiPipe2(descriptors, 0); }
 
+// ---- guest ABI: socketpair (Spotrps5) ---------------------------------------------------------------------------------------------------
+int linuxAbiSocketpair(int domain, int type, int protocol, int sv[2]) {
+    (void)protocol;
+    if (!sv) return fail(LINUX_EFAULT);
+    if (domain != 1) return fail(LINUX_EINVAL);  // AF_UNIX only
+    if ((type & 0xf) != 1 && (type & 0xf) != 2) return fail(LINUX_EINVAL);  // SOCK_STREAM (a datagram pair behaves as a stream here)
+    linuxSyncLock();
+    int object = -1;
+    for (unsigned i = 0; i < MAX_OBJECTS && object < 0; ++i)
+        if (!sockpairs[i].used) object = (int)i;
+    unsigned char *first = object >= 0 ? malloc(PIPE_BYTES) : NULL, *second = object >= 0 ? malloc(PIPE_BYTES) : NULL;
+    if (object >= 0 && first && second) {
+        sockpairs[object] = (SockPair){.used = true, .refs = {1, 1}};
+        for (unsigned end = 0; end < 2; ++end) sockpairs[object].dir[end] = (Pipe){.used = true, .read_open = true, .write_open = true, .data = end ? second : first};
+    }
+    linuxSyncUnlock();
+    if (object < 0 || !first || !second) {
+        free(first);
+        free(second);
+        return fail(LINUX_EMFILE);
+    }
+    int flags = 2 | (type & O_NONBLOCK_FLAG);
+    int a = linuxFilesVirtualCreate(LINUX_VFD_SOCKPAIR, object * 2, flags);
+    if (a < 0) {
+        linuxVfdRelease(LINUX_VFD_SOCKPAIR, object * 2, 0);
+        linuxVfdRelease(LINUX_VFD_SOCKPAIR, object * 2 + 1, 0);
+        return -1;
+    }
+    int b = linuxFilesVirtualCreate(LINUX_VFD_SOCKPAIR, object * 2 + 1, flags);
+    if (b < 0) {
+        linuxAbiClose(a);
+        linuxVfdRelease(LINUX_VFD_SOCKPAIR, object * 2 + 1, 0);
+        return -1;
+    }
+    sv[0] = a;
+    sv[1] = b;
+    return 0;
+}
+
 // ---- guest ABI: epoll -----------------------------------------------------------------------------------------------------------------
 int linuxAbiEpollCreate1(int flags) {
     if (flags & ~O_CLOEXEC_FLAG) return fail(LINUX_EINVAL);
@@ -321,7 +434,7 @@ int linuxAbiEpollCreate1(int flags) {
     int object = -1;
     for (unsigned i = 0; i < MAX_OBJECTS && object < 0; ++i)
         if (!epolls[i].used) object = (int)i;
-    if (object >= 0) epolls[object] = (Epoll){.used = true};
+    if (object >= 0) epolls[object] = (Epoll){.used = true, .refs = 1};
     linuxSyncUnlock();
     if (object < 0) return fail(LINUX_EMFILE);
     int fd = linuxFilesVirtualCreate(LINUX_VFD_EPOLL, object, 2);

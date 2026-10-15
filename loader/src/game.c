@@ -143,6 +143,7 @@ bool gameRun(const GameConfig *config) {
     linuxDlSetSearchDirectory("/lib");
     linuxDlSetFallbackResolver(linuxTrapResolve, NULL);
     linuxDlSetMainImage(&mapped);
+    if (mapped.tls_memory_bytes) linuxTlsSetProgram((const void *)mapped.tls_address, mapped.tls_file_bytes, mapped.tls_memory_bytes, mapped.tls_alignment);
     linuxRuntimeSetDynamicLoader(linuxDlLoaderHooks());
     run.main_entry = elfExecutableFindExport(&mapped, "main");
     unsigned count = 0;

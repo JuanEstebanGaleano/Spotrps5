@@ -13,7 +13,7 @@
 // Java's selectors need all of them: a selector is an epoll instance with an eventfd (or pipe) that another thread writes to in
 // order to wake it up. epoll_wait cannot sleep inside the BSD service for an in-memory descriptor, so while one is involved the
 // wait is done in short slices (a few milliseconds), which is also the worst delay of a wake-up.
-enum { LINUX_VFD_EVENTFD = 5, LINUX_VFD_PIPE = 6, LINUX_VFD_EPOLL = 7 };
+enum { LINUX_VFD_EVENTFD = 5, LINUX_VFD_PIPE = 6, LINUX_VFD_EPOLL = 7, LINUX_VFD_SOCKPAIR = 8 };
 
 typedef struct __attribute__((packed)) {
     uint32_t events;
@@ -32,12 +32,14 @@ int linuxVfdWait(LinuxVfdWait *entries, unsigned count, int timeout_ms, int *err
 
 // Object management, called by the descriptor table (linux_files.c).
 void linuxVfdRelease(int kind, int object, int access);
+void linuxVfdRetain(int kind, int object, int access);  // dup: one more descriptor refers to the object (caller holds linuxSyncLock)
 int64_t linuxVfdRead(int kind, int object, void *buffer, size_t count, bool nonblock, int *error);
 int64_t linuxVfdWrite(int kind, int object, const void *buffer, size_t count, bool nonblock, int *error);
 
 // Guest ABI.
 int linuxAbiEventfd(unsigned initial, int flags);
 int linuxAbiPipe(int descriptors[2]);
+int linuxAbiSocketpair(int domain, int type, int protocol, int sv[2]);
 int linuxAbiPipe2(int descriptors[2], int flags);
 int linuxAbiEpollCreate(int size);
 int linuxAbiEpollCreate1(int flags);

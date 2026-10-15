@@ -19,6 +19,8 @@ typedef struct {
     void *reservation;          // what the platform reserved (base lies inside it)
     size_t reservation_bytes;
     uintptr_t main_address;
+    uintptr_t tls_address;  // the program's PT_TLS initial image (runtime address), 0 when it has none
+    size_t tls_file_bytes, tls_memory_bytes, tls_alignment;
     uint32_t relocated, unresolved, unsupported, resolved, weak_null;
     bool verified;
     ElfExecutableExport exports[ELF_EXPORT_MAX];

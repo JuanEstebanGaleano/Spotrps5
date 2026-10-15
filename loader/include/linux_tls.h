@@ -22,4 +22,12 @@ bool linuxTlsRegisterModule(const void *image, size_t file_bytes, size_t memory_
 void *linuxTlsGetAddr(const LinuxTlsIndex *index);
 void linuxTlsGetAddrEntry(void);  // assembly entry bound as __tls_get_addr (realigns the stack, then linuxTlsGetAddr)
 bool linuxTlsReset(void);
+
+// The program's own thread-local storage (Spotrps5). A program whose code uses %gs instead of %fs (tools/patch_tls.py rewrites a
+// Linux build that way) gets, on every thread the loader starts, a block laid out like glibc's x86-64 one: the TLS data just below
+// the thread pointer, a pointer to itself at gs:0 and gs:0x10, and the stack-protector canary at gs:0x28. The thread pointer is
+// set with platformSetThreadPointer.
+void linuxTlsSetProgram(const void *image, size_t file_bytes, size_t memory_bytes, size_t alignment);
+bool linuxTlsThreadStart(void);  // false when the program has no TLS or the thread pointer cannot be set
+void linuxTlsThreadEnd(void);
 unsigned linuxTlsModuleCount(void);

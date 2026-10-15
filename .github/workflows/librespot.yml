@@ -21,6 +21,14 @@ jobs:
       - name: Get librespot (pinned tag)
         run: git clone --depth 1 --branch "$LIBRESPOT_TAG" https://github.com/librespot-org/librespot.git librespot
 
+      # The loader's sockets are IPv4 only: the zeroconf (discovery) server binds 0.0.0.0 instead of the dual-stack [::].
+      - name: Patch librespot for IPv4-only discovery
+        working-directory: librespot
+        run: |
+          set -euo pipefail
+          sed -i 's/SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), \*port)/SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), *port)/' discovery/src/server.rs
+          grep -n "UNSPECIFIED" discovery/src/server.rs
+
       # main is exported so the loader can find it (it looks the entry up by name); panic=abort drops the unwinding machinery.
       - name: Build (rustls, compiled-in certificates, mDNS, pipe/subprocess audio only)
         working-directory: librespot
@@ -42,7 +50,8 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/out"
           cp analysis.txt "$RUNNER_TEMP/out/librespot-analysis.md"
-          cp librespot/target/release/librespot "$RUNNER_TEMP/out/librespot-linux-x86_64"
+          # %fs -> %gs: the loader gives the program its own thread-local block through %gs (tools/patch_tls.py)
+          python3 tools/patch_tls.py librespot/target/release/librespot "$RUNNER_TEMP/out/librespot-linux-x86_64"
           strip --strip-debug "$RUNNER_TEMP/out/librespot-linux-x86_64"
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
