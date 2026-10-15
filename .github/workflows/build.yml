@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write  # only to publish the build log of a failed run to the ci-build-log branch
 
 jobs:
   title:
@@ -25,7 +25,21 @@ jobs:
           echo "IMAGE=ps5env:ci" >> "$GITHUB_ENV"
 
       - name: Build the title and its image
-        run: docker run --rm -v "$PWD:/work" -w /work "$IMAGE" bash -c "make spotify && make image-spotify"
+        run: |
+          set -o pipefail
+          docker run --rm -v "$PWD:/work" -w /work "$IMAGE" bash -c "make spotify && make image-spotify" 2>&1 | tee build.log
+
+      # The hosted logs cannot be downloaded from every environment: a failed build leaves its log on a branch.
+      - name: Publish the log of a failed build
+        if: failure()
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/log" && tail -n 400 build.log > "$RUNNER_TEMP/log/build-log.txt" || echo "no build log" > "$RUNNER_TEMP/log/build-log.txt"
+          cd "$RUNNER_TEMP/log"
+          git init -q && git checkout -q -b log
+          git config user.name "ci" && git config user.email "ci@users.noreply.github.com"
+          git add . && git commit -q -m "build log $GITHUB_SHA"
+          git push -q --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" log:ci-build-log
 
       - name: Check title contents
         run: |
