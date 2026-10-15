@@ -5,12 +5,14 @@ SHELL := bash
 
 # Homebrew range: retail ids are far lower; PS5 homebrew uses PPSA99xxx (homebrew.page catalog), 98xxx was free.
 LOADER_TITLE_ID ?= PPSA98001
+# Spotrps5's own title (a different id, so it installs next to PokeMMO Prospero).
+SPOTIFY_TITLE_ID ?= PPSA98077
 # Optional: your PC's LAN address; the loader also sends its UDP log there (it always broadcasts too; tools/udplog.py receives it).
 # PROBE_LOG_HOST, its old name, still works.
 LOG_HOST ?= $(PROBE_LOG_HOST)
 CLIENT_ZIP ?= private/PokeMMO-Client.zip
 
-.PHONY: help env-check cloud-test loader host-loader host-run overlay-preview updater-test image-loader fetch-client analyze clean
+.PHONY: spotify image-spotify help env-check cloud-test loader host-loader host-run overlay-preview updater-test image-loader fetch-client analyze clean
 
 help:
 	@echo "make loader         build the title (folder install, dist/pokemmo-prospero-loader-$(LOADER_TITLE_ID).zip; LOG_HOST=192.168.x.y optional)"
@@ -31,7 +33,7 @@ loader: env-check
 	bash scripts/runtime-libs.sh build/loader-assets/lib
 	cp assets/settings/defaults.properties build/loader-assets/defaults.properties
 	bash scripts/build-title.sh --title-id $(LOADER_TITLE_ID) --name "PokeMMO Prospero" \
-		--sources loader/src --sources loader/platform/ps5 --include loader/include --zlib \
+		--sources loader/src --sources loader/platform/ps5 --sources loader/platform/pokemmo --include loader/include --zlib \
 		--assets build/loader-assets --content-suffix LOADER --download-mib 2048 \
 		--branding assets/branding
 	@mkdir -p dist && cp build/titles/$(LOADER_TITLE_ID)/dist/$(LOADER_TITLE_ID).zip dist/pokemmo-prospero-loader-$(LOADER_TITLE_ID).zip
@@ -41,6 +43,22 @@ image-loader: loader
 	$(MAKE) -C build/titles/$(LOADER_TITLE_ID) --no-print-directory ffpfsc
 	@mkdir -p dist && cp build/titles/$(LOADER_TITLE_ID)/dist/$(LOADER_TITLE_ID).ffpfsc dist/$(LOADER_TITLE_ID).ffpfsc
 	@echo "Image: dist/$(LOADER_TITLE_ID).ffpfsc"
+
+# Spotrps5: its own title (platform/spotify), the same loader and PS5 platform layer.
+spotify: env-check
+	@rm -rf build/spotify-assets && mkdir -p build/spotify-assets
+	@if [[ -n "$(LOG_HOST)" ]]; then echo "$(LOG_HOST)" > build/spotify-assets/loghost.txt; \
+	 else echo "(no LOG_HOST: UDP broadcast only)" > build/spotify-assets/README.txt; fi
+	bash scripts/build-title.sh --title-id $(SPOTIFY_TITLE_ID) --name "Spotrps5" \
+		--sources loader/src --sources loader/platform/ps5 --sources loader/platform/spotify --include loader/include --zlib \
+		--assets build/spotify-assets --content-suffix SPOTRPS5 --download-mib 512 \
+		--branding assets/branding-spotify
+	@mkdir -p dist && cp build/titles/$(SPOTIFY_TITLE_ID)/dist/$(SPOTIFY_TITLE_ID).zip dist/spotrps5-$(SPOTIFY_TITLE_ID).zip
+
+image-spotify: spotify
+	$(MAKE) -C build/titles/$(SPOTIFY_TITLE_ID) --no-print-directory ffpfsc
+	@mkdir -p dist && cp build/titles/$(SPOTIFY_TITLE_ID)/dist/$(SPOTIFY_TITLE_ID).ffpfsc dist/$(SPOTIFY_TITLE_ID).ffpfsc
+	@echo "Image: dist/$(SPOTIFY_TITLE_ID).ffpfsc"
 
 # The loader on this PC (no console needed): same adapters, platform/host. Needs a C compiler and zlib headers.
 host-loader:

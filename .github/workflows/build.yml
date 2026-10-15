@@ -25,26 +25,26 @@ jobs:
           echo "IMAGE=ps5env:ci" >> "$GITHUB_ENV"
 
       - name: Build the title and its image
-        run: docker run --rm -v "$PWD:/work" -w /work "$IMAGE" bash -c "make loader && make image-loader"
+        run: docker run --rm -v "$PWD:/work" -w /work "$IMAGE" bash -c "make spotify && make image-spotify"
 
       - name: Check title contents
         run: |
           set -euo pipefail
           for file in eboot.bin sce_module/libc.prx sce_sys/param.json; do
-            test -s "build/titles/PPSA98001/dist/PPSA98001/$file"
+            test -s "build/titles/PPSA98077/dist/PPSA98077/$file"
           done
-          test -s dist/PPSA98001.ffpfsc
+          test -s dist/PPSA98077.ffpfsc
 
       - uses: actions/upload-artifact@v4
         with:
-          name: pokemmo-prospero-loader
-          path: dist/pokemmo-prospero-loader-PPSA98001.zip
+          name: PPSA98077-ffpfsc
+          path: dist/PPSA98077.ffpfsc
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:
-          name: PPSA98001-ffpfsc
-          path: dist/PPSA98001.ffpfsc
+          name: spotrps5-folder-install
+          path: dist/spotrps5-PPSA98077.zip
           if-no-files-found: error
 
   # The same loader on Linux, run against nothing but itself: catches build breaks of the shared adapters (the client is never
