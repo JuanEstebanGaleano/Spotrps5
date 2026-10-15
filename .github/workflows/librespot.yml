@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   LIBRESPOT_TAG: v0.8.0
@@ -30,6 +30,20 @@ jobs:
           set -euo pipefail
           ls -la librespot/target/release/librespot
           python3 tools/analyze_binary.py librespot/target/release/librespot --markdown "$GITHUB_STEP_SUMMARY" | tee analysis.txt
+
+      # The report is also committed to the ci-reports branch, so it can be read without downloading artifacts.
+      - name: Publish the report to the ci-reports branch
+        run: |
+          set -euo pipefail
+          cp analysis.txt "$RUNNER_TEMP/librespot-analysis.md"
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git fetch origin ci-reports:ci-reports 2>/dev/null && git checkout ci-reports || git checkout --orphan ci-reports
+          git rm -rf --quiet . 2>/dev/null || true
+          cp "$RUNNER_TEMP/librespot-analysis.md" librespot-analysis.md
+          git add librespot-analysis.md
+          git commit -m "librespot analysis for ${GITHUB_SHA::12}" || true
+          git push origin ci-reports
 
       - uses: actions/upload-artifact@v4
         with:
