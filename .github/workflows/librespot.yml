@@ -21,8 +21,12 @@ jobs:
       - name: Get librespot (pinned tag)
         run: git clone --depth 1 --branch "$LIBRESPOT_TAG" https://github.com/librespot-org/librespot.git librespot
 
+      # main is exported so the loader can find it (it looks the entry up by name); panic=abort drops the unwinding machinery.
       - name: Build (rustls, compiled-in certificates, mDNS, pipe/subprocess audio only)
         working-directory: librespot
+        env:
+          RUSTFLAGS: "-C link-arg=-Wl,--export-dynamic-symbol=main"
+          CARGO_PROFILE_RELEASE_PANIC: abort
         run: cargo build --release --no-default-features --features "rustls-tls-webpki-roots with-libmdns"
 
       - name: Analyze against the loader

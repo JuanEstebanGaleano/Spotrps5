@@ -103,7 +103,7 @@ def main():
         header = re.match(r"^[0-9a-f]+ <(.+)>:$", l)
         if header:
             current = header.group(1)
-        elif re.search(r"\bsyscall\b", l):
+        elif re.search(r":\s+syscall\s*$", l):  # the instruction itself, not `call syscall@plt` (the libc function)
             syscall_in[current] += 1
         elif "%fs:0x28" in l:
             canary += 1
