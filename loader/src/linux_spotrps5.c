@@ -4,6 +4,7 @@
 #include "linux_abi.h"
 #include "linux_files.h"
 #include "linux_net.h"
+#include "linux_runtime.h"
 #include "platform.h"
 #include <stdlib.h>
 #include <string.h>
