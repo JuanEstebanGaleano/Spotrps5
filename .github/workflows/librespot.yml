@@ -31,19 +31,23 @@ jobs:
           ls -la librespot/target/release/librespot
           python3 tools/analyze_binary.py librespot/target/release/librespot --markdown "$GITHUB_STEP_SUMMARY" | tee analysis.txt
 
-      # The report is also committed to the ci-reports branch, so it can be read without downloading artifacts.
-      - name: Publish the report to the ci-reports branch
+      # The report and the program are also committed (as one forced commit) to the ci-reports branch, so they can be read
+      # and run without downloading artifacts.
+      - name: Publish the report and the program to the ci-reports branch
         run: |
           set -euo pipefail
-          cp analysis.txt "$RUNNER_TEMP/librespot-analysis.md"
+          mkdir -p "$RUNNER_TEMP/out"
+          cp analysis.txt "$RUNNER_TEMP/out/librespot-analysis.md"
+          cp librespot/target/release/librespot "$RUNNER_TEMP/out/librespot"
+          strip --strip-debug "$RUNNER_TEMP/out/librespot"
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
-          git fetch origin ci-reports:ci-reports 2>/dev/null && git checkout ci-reports || git checkout --orphan ci-reports
+          git checkout --orphan reports-tmp
           git rm -rf --quiet . 2>/dev/null || true
-          cp "$RUNNER_TEMP/librespot-analysis.md" librespot-analysis.md
-          git add librespot-analysis.md
-          git commit -m "librespot analysis for ${GITHUB_SHA::12}" || true
-          git push origin ci-reports
+          cp "$RUNNER_TEMP/out/"* .
+          git add librespot-analysis.md librespot
+          git commit -q -m "librespot build and analysis for ${GITHUB_SHA::12}"
+          git push --force origin reports-tmp:ci-reports
 
       - uses: actions/upload-artifact@v4
         with:

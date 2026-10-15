@@ -96,17 +96,33 @@ def main():
     say("## Thread-local storage")
     say(f"- PT_TLS: {'present: ' + ' '.join(tls[0].split()) if tls else 'none'}")
 
-    disassembly = run("objdump", "-d", "--no-show-raw-insn", str(args.program)).splitlines()
-    syscalls = sum(1 for l in disassembly if re.search(r"\bsyscall\b", l))
-    fs_other = collections.Counter(m for l in disassembly for m in re.findall(r"%fs:(?!0x28\b)[^\s,)]*", l))
-    canary = sum(1 for l in disassembly if "%fs:0x28" in l)
+    disassembly = run("objdump", "-dC", "--no-show-raw-insn", str(args.program)).splitlines()
+    syscall_in, tls_in, current = collections.Counter(), collections.Counter(), "?"
+    canary = fs_other = 0
+    for l in disassembly:
+        header = re.match(r"^[0-9a-f]+ <(.+)>:$", l)
+        if header:
+            current = header.group(1)
+        elif re.search(r"\bsyscall\b", l):
+            syscall_in[current] += 1
+        elif "%fs:0x28" in l:
+            canary += 1
+        elif "%fs:" in l:
+            fs_other += 1
+            tls_in[current] += 1
     say()
     say("## Raw system calls and %fs")
-    say(f"- raw `syscall` instructions: {syscalls}")
+    say(f"- raw `syscall` instructions: {sum(syscall_in.values())} in {len(syscall_in)} functions")
+    for name, count in syscall_in.most_common(25):
+        say(f"  - `{name[:110]}` x{count}")
     say(f"- %fs:0x28 (stack canary) reads: {canary}")
-    say(f"- other %fs accesses: {sum(fs_other.values())} ({len(fs_other)} distinct)")
-    for access, count in fs_other.most_common(10):
-        say(f"  - `{access}` x{count}")
+    say(f"- other %fs accesses (thread-local storage): {fs_other} in {len(tls_in)} functions")
+    for name, count in tls_in.most_common(8):
+        say(f"  - `{name[:110]}` x{count}")
+    exported = [l.split()[-1] for l in run("readelf", "--dyn-syms", "-W", str(args.program)).splitlines() if len(l.split()) >= 8 and l.split()[6] != "UND" and l.split()[-1] in ("main", "_start")]
+    say()
+    say("## Entry point")
+    say(f"- dynamic symbols named main/_start: {', '.join(exported) if exported else 'none (the loader looks main up by name: export it with -Wl,--export-dynamic-symbol=main)'}")
 
     text = "\n".join(out) + "\n"
     print(text)

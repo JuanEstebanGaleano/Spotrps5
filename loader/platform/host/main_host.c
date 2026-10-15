@@ -4,7 +4,7 @@
 // Runs the official client inside the loader on a Linux PC: the same ELF loader and Linux ABI adapters as the PS5 title, on the
 // host platform layer. Used to develop the adapters with ordinary tools before anything is tried on a console.
 //
-//   prospero-host --client <folder with bin/linux/x64/PokeMMO, data/, config/> --root <scratch folder> [--timeout seconds] [-- client options]
+//   prospero-host --client <folder with bin/linux/x64/PokeMMO, data/, config/> [--program ELF] --root <scratch folder> [--timeout seconds] [-- client options]
 #include "diagnostics.h"
 #include "game.h"
 #include "platform.h"
@@ -14,7 +14,7 @@
 #include <sys/stat.h>
 
 int main(int argc, char **argv) {
-    const char *client = NULL, *root = NULL;
+    const char *client = NULL, *root = NULL, *program = NULL;
     unsigned timeout = 120;
     const char *options[16] = {"-XX:MaxHeapSize=640m", "-XX:MaxNewSize=128m", NULL};
     unsigned option_count = 2;
@@ -23,6 +23,8 @@ int main(int argc, char **argv) {
             client = argv[++i];
         else if (!strcmp(argv[i], "--root") && i + 1 < argc)
             root = argv[++i];
+        else if (!strcmp(argv[i], "--program") && i + 1 < argc)
+            program = argv[++i];  // Spotrps5: any Linux x86-64 program instead of bin/linux/x64/PokeMMO inside --client
         else if (!strcmp(argv[i], "--timeout") && i + 1 < argc)
             timeout = (unsigned)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--")) {
@@ -42,7 +44,10 @@ int main(int argc, char **argv) {
     char game[512], executable[600];
     snprintf(game, sizeof(game), "%s/game", root);
     mkdir(game, 0700);  // the mount point must exist for chdir("/game")
-    snprintf(executable, sizeof(executable), "%s/bin/linux/x64/PokeMMO", client);
+    if (program)
+        snprintf(executable, sizeof(executable), "%s", program);
+    else
+        snprintf(executable, sizeof(executable), "%s/bin/linux/x64/PokeMMO", client);
     GameConfig config = {.root = root, .client_path = executable, .mounts = {{"/game", client}}, .mount_count = 1, .arguments = options,
                          .timeout_seconds = timeout};
     diagnosticsTrace("host.start client=%s root=%s", client, root);
