@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Milestone 2: builds librespot for x86-64 Linux (what the loader runs) and reports what the loader is missing for it.
+name: librespot
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  LIBRESPOT_TAG: v0.8.0
+
+jobs:
+  analyze:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get librespot (pinned tag)
+        run: git clone --depth 1 --branch "$LIBRESPOT_TAG" https://github.com/librespot-org/librespot.git librespot
+
+      - name: Build (rustls, compiled-in certificates, mDNS, pipe/subprocess audio only)
+        working-directory: librespot
+        run: cargo build --release --no-default-features --features "rustls-tls-webpki-roots with-libmdns"
+
+      - name: Analyze against the loader
+        run: |
+          set -euo pipefail
+          ls -la librespot/target/release/librespot
+          python3 tools/analyze_binary.py librespot/target/release/librespot --markdown "$GITHUB_STEP_SUMMARY" | tee analysis.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: librespot-x86_64-linux
+          path: |
+            librespot/target/release/librespot
+            analysis.txt
