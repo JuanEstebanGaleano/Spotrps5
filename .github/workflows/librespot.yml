@@ -38,14 +38,14 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/out"
           cp analysis.txt "$RUNNER_TEMP/out/librespot-analysis.md"
-          cp librespot/target/release/librespot "$RUNNER_TEMP/out/librespot"
-          strip --strip-debug "$RUNNER_TEMP/out/librespot"
+          cp librespot/target/release/librespot "$RUNNER_TEMP/out/librespot-linux-x86_64"
+          strip --strip-debug "$RUNNER_TEMP/out/librespot-linux-x86_64"
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           git checkout --orphan reports-tmp
           git rm -rf --quiet . 2>/dev/null || true
           cp "$RUNNER_TEMP/out/"* .
-          git add librespot-analysis.md librespot
+          git add librespot-analysis.md librespot-linux-x86_64
           git commit -q -m "librespot build and analysis for ${GITHUB_SHA::12}"
           git push --force origin reports-tmp:ci-reports
 
