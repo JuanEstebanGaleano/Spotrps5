@@ -11,6 +11,7 @@
 #include "platform.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
@@ -162,7 +163,25 @@ int linuxNetNativeConnect(int handle, const BsdSockaddrIn *address, int *error) 
 }
 int linuxNetNativeBind(int handle, const BsdSockaddrIn *address, int *error) {
     struct sockaddr_in native = toNative(address);
-    return bind(handle, (const struct sockaddr *)&native, sizeof(native)) < 0 ? failure("bind", error) : 0;
+    if (bind(handle, (const struct sockaddr *)&native, sizeof(native)) == 0) return 0;
+    int first = errno;
+    if (ntohs(native.sin_port) == 5353) {
+        // mDNS: the console refuses the wildcard address on this port (EACCES). Try the multicast group's own address, which receives the same
+        // queries; when that is refused too, mDNS is unavailable: report it and let the program carry on (it can still log in another way).
+        struct sockaddr_in group = native;
+        group.sin_addr.s_addr = htonl(0xE00000FBu);  // 224.0.0.251
+        char note[96];
+        if (bind(handle, (const struct sockaddr *)&group, sizeof(group)) == 0) {
+            gameNote("mDNS: bound to 224.0.0.251:5353");
+            return 0;
+        }
+        snprintf(note, sizeof(note), "mDNS: bind 5353 refused (errno %d, then %d); continuing without it", first, errno);
+        gameNote(note);
+        errno = first;
+        return 0;
+    }
+    errno = first;
+    return failure("bind", error);
 }
 int linuxNetNativeListen(int handle, int backlog, int *error) { return listen(handle, backlog) < 0 ? failure("listen", error) : 0; }
 int linuxNetNativeAccept(int handle, BsdSockaddrIn *address, int *error) {
