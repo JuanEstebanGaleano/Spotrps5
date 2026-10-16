@@ -25,7 +25,7 @@ const size_t ps5_opengl_heap_size = 768u << 20;
 
 int sceKernelUsleep(unsigned int microseconds);
 
-#define MILESTONE "spotrps5-3d"
+#define MILESTONE "spotrps5-3e"
 #define DEVICE_NAME "Spotrps5"
 #define ROOT "/download0/spotrps5"
 
@@ -107,8 +107,35 @@ static void pcmFrame(int16_t left, int16_t right) {
     pcm.previous[0] = left;
     pcm.previous[1] = right;
 }
+// librespot's login prints "Browse to: <url>" and "If prompted, enter code: <code>" on stdout, where the audio also goes: show them.
+static char pair_url[200], pair_code[24];
+static bool loginText(const char *bytes, size_t count) {
+    if (count < 12 || count > 400) return false;
+    char text[401];
+    memcpy(text, bytes, count);
+    text[count] = 0;
+    const char *url = strstr(text, "Browse to: "), *code = strstr(text, "enter code: ");
+    if (!url && !code) return false;
+    if (url) {
+        url += 11;
+        size_t n = strcspn(url, "\r\n");
+        if (n >= sizeof(pair_url)) n = sizeof(pair_url) - 1;
+        memcpy(pair_url, url, n);
+        pair_url[n] = 0;
+    }
+    if (code) {
+        code += 12;
+        size_t n = strcspn(code, "\r\n");
+        if (n >= sizeof(pair_code)) n = sizeof(pair_code) - 1;
+        memcpy(pair_code, code, n);
+        pair_code[n] = 0;
+    }
+    diagnosticsTrace("login: url=%s code=%s", pair_url, pair_code);
+    return true;
+}
 static int64_t pcmSink(void *context, const void *bytes, size_t count) {
     (void)context;
+    if (loginText(bytes, count)) return (int64_t)count;
     if (pcm.handle < 0) {
         pcm.handle = platformAudioOpen(BLOCK_FRAMES);
         diagnosticsTrace("audio: open handle=%d", pcm.handle);
@@ -138,7 +165,7 @@ static void *librespotThread(void *argument) {
     mkdir(ROOT, 0755);
     mkdir(ROOT "/game", 0755);
     static const char *const arguments[] = {"--name", DEVICE_NAME, "--backend", "pipe", "--format", "S16", "--disable-audio-cache", "--cache",
-                                            "/home/ps5/cache", "--initial-volume", "70", "-v", NULL};
+                                            "/home/ps5/cache", "--enable-device-auth", "--initial-volume", "70", "-v", NULL};
     GameConfig config = {.root = ROOT,
                          .client_path = "/app0/assets/librespot",
                          .mounts = {{"/game", ROOT "/game"}},
@@ -177,8 +204,15 @@ static void drawScreen(const char *address, unsigned frame) {
             overlayText(60, 650 + (int)(i - first) * 26, shown, 20, 0xFFD080FF);
         }
     } else {
-        snprintf(line, sizeof(line), "Abre Spotify (Premium) y elige el dispositivo \"%s\"%s", DEVICE_NAME, dots[(frame / 30) % 4]);
-        overlayTextCentered(OVERLAY_WIDTH / 2, 560, line, 34, 0xE8E8E8FF);
+        if (pair_code[0]) {
+            overlayTextCentered(OVERLAY_WIDTH / 2, 530, "Inicia sesion: en tu movil o PC abre spotify.com/pair", 34, 0xE8E8E8FF);
+            snprintf(line, sizeof(line), "y escribe el codigo  %s", pair_code);
+            overlayTextCentered(OVERLAY_WIDTH / 2, 600, line, 52, 0x1DB954FF);
+            overlayTextCentered(OVERLAY_WIDTH / 2, 670, "Despues elige el dispositivo \"" DEVICE_NAME "\" en Spotify (Premium)", 28, 0xA0A0A0FF);
+        } else {
+            snprintf(line, sizeof(line), "Abre Spotify (Premium) y elige el dispositivo \"%s\"%s", DEVICE_NAME, dots[(frame / 30) % 4]);
+            overlayTextCentered(OVERLAY_WIDTH / 2, 560, line, 34, 0xE8E8E8FF);
+        }
         snprintf(line, sizeof(line), "Audio recibido: %llu KB", atomic_load(&pcm_bytes) / 1024);
         overlayTextCentered(OVERLAY_WIDTH / 2, 620, line, 30, 0xA0A0A0FF);
     }
