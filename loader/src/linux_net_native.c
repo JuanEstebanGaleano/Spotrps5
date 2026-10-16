@@ -6,6 +6,7 @@
 // Name resolution goes through platformResolveIPv4 (the PS5's sceNetResolver: getaddrinfo crashes inside a PS5 title).
 #include "linux_net_native.h"
 #include "diagnostics.h"
+#include "game.h"
 #include "linux_abi.h"
 #include "platform.h"
 #include <errno.h>
@@ -34,6 +35,11 @@ static int failure(const char *operation, int *error) {
     int native = errno;
     *error = linuxNetErrnoFromNative(native);
     trace("net.%s=ERROR native_errno=%d linux_errno=%d", operation, native, *error);
+    {
+        char note[96];
+        snprintf(note, sizeof(note), "net.%s failed: native errno %d (linux %d)", operation, native, *error);
+        gameNote(note);
+    }
     return -1;
 }
 
@@ -210,6 +216,12 @@ int linuxNetNativeIpOption(int handle, int name, const void *value, unsigned len
         case 36:
             if (length < 2 * sizeof(struct in_addr)) return *error = LINUX_EINVAL, -1;
             result = setsockopt(handle, IPPROTO_IP, name == 35 ? IP_ADD_MEMBERSHIP : IP_DROP_MEMBERSHIP, value, 2 * sizeof(struct in_addr));
+            if (result < 0) {  // not fatal for mDNS: report it on the screen and carry on without the group
+                char note[96];
+                snprintf(note, sizeof(note), "multicast membership %d refused: native errno %d (ignored)", name, errno);
+                gameNote(note);
+                result = 0;
+            }
             break;
         default: *error = LINUX_ENOPROTOOPT; return -1;
     }

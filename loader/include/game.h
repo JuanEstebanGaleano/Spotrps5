@@ -29,3 +29,4 @@ bool gameRun(const GameConfig *config);
 const char *gameFailure(void);  // a short sentence, valid after gameRun returned false
 unsigned gameRecentCount(void);            // lines kept for the screen: the program's last stderr lines, refused imports, how it ended
 const char *gameRecentLine(unsigned index);  // 0 is the oldest
+void gameNote(const char *text);

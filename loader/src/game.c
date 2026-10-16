@@ -57,6 +57,12 @@ static void remember(const char *text, size_t length) {
     slot[length] = 0;
     ++recent_count;
 }
+void gameNote(const char *text) {  // from the adapters: something the screen should show when the program stops
+    static atomic_flag note_lock = ATOMIC_FLAG_INIT;
+    while (atomic_flag_test_and_set_explicit(&note_lock, memory_order_acquire)) linuxThreadYield();
+    remember(text, strlen(text));
+    atomic_flag_clear_explicit(&note_lock, memory_order_release);
+}
 unsigned gameRecentCount(void) { return recent_count < RECENT_LINES ? recent_count : RECENT_LINES; }
 const char *gameRecentLine(unsigned index) {  // 0 is the oldest of the kept lines
     unsigned count = gameRecentCount();
