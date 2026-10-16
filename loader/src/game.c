@@ -20,6 +20,7 @@
 #include "platform.h"
 #include <errno.h>
 #include <stdatomic.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 
@@ -45,7 +46,24 @@ static LinuxRuntimeExport exports[ELF_EXPORT_MAX];
 static char pending[3][LINE_BYTES + 1];
 static size_t pending_bytes[3];
 static atomic_flag capture_lock = ATOMIC_FLAG_INIT;
+// The last lines the program wrote, and the end of the run: the title shows them when the program stops.
+#define RECENT_LINES 12u
+static char recent[RECENT_LINES][LINE_BYTES + 1];
+static unsigned recent_count;
+static void remember(const char *text, size_t length) {
+    char *slot = recent[recent_count % RECENT_LINES];
+    if (length > LINE_BYTES) length = LINE_BYTES;
+    memcpy(slot, text, length);
+    slot[length] = 0;
+    ++recent_count;
+}
+unsigned gameRecentCount(void) { return recent_count < RECENT_LINES ? recent_count : RECENT_LINES; }
+const char *gameRecentLine(unsigned index) {  // 0 is the oldest of the kept lines
+    unsigned count = gameRecentCount();
+    return index < count ? recent[(recent_count - count + index) % RECENT_LINES] : "";
+}
 static void emitLine(int fd) {
+    if (fd == 2) remember(pending[fd], pending_bytes[fd]);
     diagnosticsTrace("client.%s %.*s", fd == 1 ? "out" : "err", (int)pending_bytes[fd], pending[fd]);
     pending_bytes[fd] = 0;
 }
@@ -92,6 +110,13 @@ static void summary(void) {
         diagnosticsTrace("game.trap.called name=%s calls=%u first_caller=0x%llx client_offset=0x%llx", linuxTrapName(i), n, (unsigned long long)caller,
                          (unsigned long long)(caller - (uintptr_t)mapped.base));
     }
+    for (unsigned i = 0, shown = 0; i < trap_stats.count && shown < 3; ++i)
+        if (linuxTrapCalls(i)) {
+            char text[LINE_BYTES];
+            int n = snprintf(text, sizeof(text), "import refused: %s", linuxTrapName(i));
+            remember(text, (size_t)n);
+            ++shown;
+        }
     LinuxSyscallRecord syscalls[8];
     size_t unsupported = linuxRuntimeUnsupportedSyscalls(syscalls, 8);
     for (size_t i = 0; i < unsupported; ++i)
@@ -124,6 +149,7 @@ bool gameRun(const GameConfig *config) {
     failure = "";
     memset(&run, 0, sizeof(run));
     memset(pending_bytes, 0, sizeof(pending_bytes));
+    recent_count = 0;
     stdout_sink = config->stdout_sink;
     stdout_context = config->stdout_context;
     linuxStdioSetConsoleSink(sink, NULL);
@@ -203,6 +229,11 @@ bool gameRun(const GameConfig *config) {
         return false;
     }
     LinuxTermination termination = linuxRuntimeTermination();
+    {
+        char text[LINE_BYTES];
+        int n = snprintf(text, sizeof(text), "end: kind=%d status=%d returned=%d rc=%d", (int)termination.kind, termination.status, (int)atomic_load(&run.returned), run.rc);
+        remember(text, (size_t)n);
+    }
     bool exited_cleanly = termination.kind == LINUX_TERMINATION_EXIT && termination.status == 0;
     ok = (atomic_load(&run.returned) && run.rc == 0 && termination.kind == LINUX_TERMINATION_NONE) || exited_cleanly;
     logState("after_main");

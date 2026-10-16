@@ -27,3 +27,5 @@ typedef struct {
 // Runs the official PokeMMO client (its `main`) inside the adapters and waits for it. True when main returned 0 or exit(0) was called.
 bool gameRun(const GameConfig *config);
 const char *gameFailure(void);  // a short sentence, valid after gameRun returned false
+unsigned gameRecentCount(void);            // lines kept for the screen: the program's last stderr lines, refused imports, how it ended
+const char *gameRecentLine(unsigned index);  // 0 is the oldest

@@ -169,7 +169,13 @@ static void drawScreen(const char *address, unsigned frame) {
     int state = atomic_load(&player_state);
     if (state == 2) {
         overlayTextCentered(OVERLAY_WIDTH / 2, 560, "librespot se detuvo", 36, 0xFF6060FF);
-        overlayTextCentered(OVERLAY_WIDTH / 2, 620, player_failure, 28, 0xA0A0A0FF);
+        overlayTextCentered(OVERLAY_WIDTH / 2, 605, player_failure, 26, 0xA0A0A0FF);
+        unsigned lines = gameRecentCount(), first = lines > 9 ? lines - 9 : 0;
+        for (unsigned i = first; i < lines; ++i) {
+            char shown[100];
+            snprintf(shown, sizeof(shown), "%s", gameRecentLine(i));
+            overlayText(60, 650 + (int)(i - first) * 26, shown, 20, 0xFFD080FF);
+        }
     } else {
         snprintf(line, sizeof(line), "Abre Spotify (Premium) y elige el dispositivo \"%s\"%s", DEVICE_NAME, dots[(frame / 30) % 4]);
         overlayTextCentered(OVERLAY_WIDTH / 2, 560, line, 34, 0xE8E8E8FF);
@@ -177,11 +183,11 @@ static void drawScreen(const char *address, unsigned frame) {
         overlayTextCentered(OVERLAY_WIDTH / 2, 620, line, 30, 0xA0A0A0FF);
     }
     snprintf(line, sizeof(line), "IP de la consola: %s", address);
-    overlayTextCentered(OVERLAY_WIDTH / 2, 760, line, 30, 0xA0A0A0FF);
+    overlayTextCentered(OVERLAY_WIDTH / 2, 940, line, 24, 0xA0A0A0FF);
     int probe = atomic_load(&tls_result);
     snprintf(line, sizeof(line), "Prueba de hilos (%%gs): %s%s%s", probe == 0 ? "comprobando" : probe == 1 ? "FUNCIONA, via " : "NO FUNCIONA: ",
              probe == 0 ? "" : platformThreadPointerNote(), "");
-    overlayTextCentered(OVERLAY_WIDTH / 2, 820, line, 30, probe == 1 ? 0x1DB954FF : probe == 2 ? 0xFF6060FF : 0xA0A0A0FF);
+    overlayTextCentered(OVERLAY_WIDTH / 2, 985, line, 24, probe == 1 ? 0x1DB954FF : probe == 2 ? 0xFF6060FF : 0xA0A0A0FF);
     snprintf(line, sizeof(line), "v%s (%s)  -  Circulo: salir", PROSPERO_RELEASE, MILESTONE);
     overlayText(40, OVERLAY_HEIGHT - 60, line, 26, 0x707070FF);
     overlayEnd();
