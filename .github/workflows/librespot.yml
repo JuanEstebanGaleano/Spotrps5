@@ -39,9 +39,32 @@ jobs:
       - name: Build (rustls, compiled-in certificates, mDNS, pipe/subprocess audio only)
         working-directory: librespot
         env:
-          RUSTFLAGS: "-C link-arg=-Wl,--export-dynamic-symbol=main"
+          # max-page-size: the console's pages are 16 KiB; a page can never hold both code and writable data, so segments are kept apart by 16 KiB.
+          RUSTFLAGS: "-C link-arg=-Wl,--export-dynamic-symbol=main -C link-arg=-Wl,-z,max-page-size=16384"
           CARGO_PROFILE_RELEASE_PANIC: abort
         run: cargo build --release --no-default-features --features "rustls-tls-webpki-roots with-libmdns"
+
+      - name: Check segment alignment (16 KiB pages)
+        run: |
+          set -euo pipefail
+          readelf -lW librespot/target/release/librespot | grep -E "LOAD|TLS"
+          python3 - <<'EOF2'
+          import re, subprocess
+          out = subprocess.check_output(["readelf", "-lW", "librespot/target/release/librespot"], text=True)
+          segs = []
+          for line in out.splitlines():
+              m = re.match(r"\s*LOAD\s+(0x\w+)\s+(0x\w+)\s+\S+\s+(0x\w+)\s+(0x\w+)\s+(\w+(?: \w)*?)\s+0x\w+", line)
+              if m:
+                  _, vaddr, filesz, memsz, flags = m.groups()
+                  segs.append((int(vaddr, 16), int(memsz, 16), flags))
+          PAGE = 16384
+          bad = 0
+          for a, b in zip(segs, segs[1:]):
+              end_a = a[0] + a[1]
+              if (end_a - 1) // PAGE == b[0] // PAGE and a[2] != b[2]:
+                  print("SHARED PAGE between", a, b); bad = 1
+          raise SystemExit(bad)
+          EOF2
 
       - name: Analyze against the loader
         run: |
