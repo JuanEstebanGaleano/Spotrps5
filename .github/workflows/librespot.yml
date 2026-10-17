@@ -10,7 +10,8 @@ permissions:
   contents: write
 
 env:
-  LIBRESPOT_TAG: v0.8.0
+  # v0.8.0 has no device-code login (--enable-device-auth): this is a pinned commit of the dev branch that has it.
+  LIBRESPOT_REV: 4a005903e078d512456fb008aaa9ba6246881bd9
 
 jobs:
   analyze:
@@ -18,8 +19,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get librespot (pinned tag)
-        run: git clone --depth 1 --branch "$LIBRESPOT_TAG" https://github.com/librespot-org/librespot.git librespot
+      - name: Get librespot (pinned commit)
+        run: |
+          set -euo pipefail
+          git init -q librespot && cd librespot
+          git fetch -q --depth 1 https://github.com/librespot-org/librespot.git "$LIBRESPOT_REV"
+          git checkout -q FETCH_HEAD
+          git log --oneline -1
 
       # The loader's sockets are IPv4 only: the zeroconf (discovery) server binds 0.0.0.0 instead of the dual-stack [::].
       - name: Patch librespot for IPv4-only discovery
