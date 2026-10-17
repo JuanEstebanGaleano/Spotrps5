@@ -1,0 +1,116 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Milestone 2: builds librespot for x86-64 Linux (what the loader runs) and reports what the loader is missing for it.
+name: librespot
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # v0.8.0 has no device-code login (--enable-device-auth): this is a pinned commit of the dev branch that has it.
+  LIBRESPOT_REV: 4a005903e078d512456fb008aaa9ba6246881bd9
+
+jobs:
+  analyze:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get librespot (pinned commit)
+        run: |
+          set -euo pipefail
+          git init -q librespot && cd librespot
+          git fetch -q --depth 1 https://github.com/librespot-org/librespot.git "$LIBRESPOT_REV"
+          git checkout -q FETCH_HEAD
+          git log --oneline -1
+
+      # The loader's sockets are IPv4 only: the zeroconf (discovery) server binds 0.0.0.0 instead of the dual-stack [::].
+      - name: Patch librespot for IPv4-only discovery
+        working-directory: librespot
+        run: |
+          set -euo pipefail
+          sed -i 's/SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), \*port)/SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), *port)/' discovery/src/server.rs
+          grep -n "UNSPECIFIED" discovery/src/server.rs
+
+      # The title drives librespot with one-line commands on stdin (play_pause, next, prev, vol_up...).
+      - name: Patch librespot to take commands on stdin
+        run: python3 tools/patch_librespot.py librespot
+
+      # main is exported so the loader can find it (it looks the entry up by name); panic=abort drops the unwinding machinery.
+      - name: Build (rustls, compiled-in certificates, mDNS, pipe/subprocess audio only)
+        working-directory: librespot
+        env:
+          # max-page-size: the console's pages are 16 KiB; a page can never hold both code and writable data, so segments are kept apart by 16 KiB.
+          RUSTFLAGS: "-C link-arg=-Wl,--export-dynamic-symbol=main -C link-arg=-Wl,-z,max-page-size=16384"
+          CARGO_PROFILE_RELEASE_PANIC: abort
+        run: |
+          set -o pipefail
+          cargo build --release --no-default-features --features "rustls-tls-webpki-roots with-libmdns" 2>&1 | tee ../cargo.log
+
+      - name: Publish the log of a failed build
+        if: failure()
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/log" && tail -n 300 cargo.log > "$RUNNER_TEMP/log/cargo-log.txt" || echo "no log" > "$RUNNER_TEMP/log/cargo-log.txt"
+          cd "$RUNNER_TEMP/log"
+          git init -q && git checkout -q -b log
+          git config user.name "ci" && git config user.email "ci@users.noreply.github.com"
+          git add . && git commit -q -m "cargo log $GITHUB_SHA"
+          git push -q --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" log:ci-librespot-log
+
+      - name: Check segment alignment (16 KiB pages)
+        run: |
+          set -euo pipefail
+          readelf -lW librespot/target/release/librespot | grep -E "LOAD|TLS"
+          python3 - <<'EOF2'
+          import re, subprocess
+          out = subprocess.check_output(["readelf", "-lW", "librespot/target/release/librespot"], text=True)
+          segs = []
+          for line in out.splitlines():
+              m = re.match(r"\s*LOAD\s+(0x\w+)\s+(0x\w+)\s+\S+\s+(0x\w+)\s+(0x\w+)\s+(\w+(?: \w)*?)\s+0x\w+", line)
+              if m:
+                  _, vaddr, filesz, memsz, flags = m.groups()
+                  segs.append((int(vaddr, 16), int(memsz, 16), flags))
+          PAGE = 16384
+          bad = 0
+          for a, b in zip(segs, segs[1:]):
+              end_a = a[0] + a[1]
+              if (end_a - 1) // PAGE == b[0] // PAGE and a[2] != b[2]:
+                  print("SHARED PAGE between", a, b); bad = 1
+          raise SystemExit(bad)
+          EOF2
+
+      - name: Analyze against the loader
+        run: |
+          set -euo pipefail
+          ls -la librespot/target/release/librespot
+          python3 tools/analyze_binary.py librespot/target/release/librespot --markdown "$GITHUB_STEP_SUMMARY" | tee analysis.txt
+
+      # The report and the program are also committed (as one forced commit) to the ci-reports branch, so they can be read
+      # and run without downloading artifacts.
+      - name: Publish the report and the program to the ci-reports branch
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/out"
+          cp analysis.txt "$RUNNER_TEMP/out/librespot-analysis.md"
+          # %fs -> %gs: the loader gives the program its own thread-local block through %gs (tools/patch_tls.py)
+          python3 tools/patch_tls.py librespot/target/release/librespot "$RUNNER_TEMP/out/librespot-linux-x86_64"
+          strip --strip-debug "$RUNNER_TEMP/out/librespot-linux-x86_64"
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git checkout --orphan reports-tmp
+          git rm -rf --quiet . 2>/dev/null || true
+          cp "$RUNNER_TEMP/out/"* .
+          git add librespot-analysis.md librespot-linux-x86_64
+          git commit -q -m "librespot build and analysis for ${GITHUB_SHA::12}"
+          git push --force origin reports-tmp:ci-reports
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: librespot-x86_64-linux
+          path: |
+            librespot/target/release/librespot
+            analysis.txt

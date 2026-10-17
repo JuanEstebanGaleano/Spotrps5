@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Builds the title (folder zip and .ffpfsc image) inside a toolchain image built from buildenv/docker. No third-party client is downloaded here.
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write  # only to publish the build log of a failed run to the ci-build-log branch
+
+jobs:
+  title:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # The toolchain image is built here from buildenv/docker (pinned, checksum-verified downloads), so this repository
+      # does not depend on anyone else's published image.
+      - name: Build the toolchain image
+        run: |
+          set -euo pipefail
+          docker build -t ps5env:ci -f buildenv/docker/Dockerfile buildenv
+          echo "IMAGE=ps5env:ci" >> "$GITHUB_ENV"
+
+      # librespot (patched, built by the librespot workflow) is bundled into the title.
+      - name: Fetch the librespot binary
+        run: |
+          set -euo pipefail
+          git fetch --depth 1 origin ci-reports
+          mkdir -p private
+          git show origin/ci-reports:librespot-linux-x86_64 > private/librespot
+          test -s private/librespot
+          ls -l private/librespot
+
+      - name: Build the title and its image
+        run: |
+          set -o pipefail
+          docker run --rm -v "$PWD:/work" -w /work "$IMAGE" bash -c "make spotify && make image-spotify" 2>&1 | tee build.log
+
+      # The hosted logs cannot be downloaded from every environment: a failed build leaves its log on a branch.
+      - name: Publish the log of a failed build
+        if: failure()
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/log" && tail -n 400 build.log > "$RUNNER_TEMP/log/build-log.txt" || echo "no build log" > "$RUNNER_TEMP/log/build-log.txt"
+          cd "$RUNNER_TEMP/log"
+          git init -q && git checkout -q -b log
+          git config user.name "ci" && git config user.email "ci@users.noreply.github.com"
+          git add . && git commit -q -m "build log $GITHUB_SHA"
+          git push -q --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" log:ci-build-log
+
+      - name: Check title contents
+        run: |
+          set -euo pipefail
+          for file in eboot.bin sce_module/libc.prx sce_sys/param.json; do
+            test -s "build/titles/PPSA98077/dist/PPSA98077/$file"
+          done
+          test -s dist/PPSA98077.ffpfsc
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PPSA98077-ffpfsc
+          path: dist/PPSA98077.ffpfsc
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spotrps5-folder-install
+          path: dist/spotrps5-PPSA98077.zip
+          if-no-files-found: error
+
+  # The same loader on Linux, run against nothing but itself: catches build breaks of the shared adapters (the client is never
+  # downloaded in CI, so the run itself happens on a developer's PC with `make host-run`).
+  host-loader:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the host loader
+        run: sudo apt-get install -y --no-install-recommends clang zlib1g-dev && make host-loader
