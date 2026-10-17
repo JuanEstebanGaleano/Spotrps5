@@ -187,6 +187,7 @@ typedef struct {
 #define BINDG(name, function, version) {name, (uintptr_t)(function), version, "libgcc_s.so.1"}
 #define BINDZ(name, function, version) {name, (uintptr_t)(function), version, "libz.so.1"}
 static const Binding bindings[] = {
+    BIND("gnu_get_libc_version", linuxGnuGetLibcVersion),
     BINDG("_Unwind_Backtrace", linuxUnwindBacktrace, "GCC_3.3"), BINDG("_Unwind_RaiseException", linuxUnwindRaise, "GCC_3.0"),
     BINDG("_Unwind_Resume", linuxUnwindResume, "GCC_3.0"), BINDG("_Unwind_DeleteException", linuxUnwindDelete, "GCC_3.0"),
     BINDG("_Unwind_GetIP", linuxUnwindZero, "GCC_3.0"), BINDG("_Unwind_GetIPInfo", linuxUnwindGetIPInfo, "GCC_4.2.0"),

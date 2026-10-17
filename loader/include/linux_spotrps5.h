@@ -20,3 +20,4 @@ void linuxUnwindResume(void *exception);
 void linuxUnwindDelete(void *exception);
 uintptr_t linuxUnwindZero(void *context);
 uintptr_t linuxUnwindGetIPInfo(void *context, int *before);
+const char *linuxGnuGetLibcVersion(void);

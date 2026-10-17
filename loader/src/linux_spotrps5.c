@@ -186,3 +186,5 @@ uintptr_t linuxUnwindGetIPInfo(void *context, int *before) {
     if (before) *before = 0;
     return 0;
 }
+
+const char *linuxGnuGetLibcVersion(void) { return "2.35"; }
