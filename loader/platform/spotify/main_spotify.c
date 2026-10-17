@@ -25,7 +25,7 @@ const size_t ps5_opengl_heap_size = 768u << 20;
 
 int sceKernelUsleep(unsigned int microseconds);
 
-#define MILESTONE "spotrps5-3h"
+#define MILESTONE "spotrps5-4a"
 #define DEVICE_NAME "Spotrps5"
 #define ROOT "/download0/spotrps5"
 
@@ -133,6 +133,20 @@ static bool loginText(const char *bytes, size_t count) {
     diagnosticsTrace("login: url=%s code=%s", pair_url, pair_code);
     return true;
 }
+// What librespot says it is playing: "Loading <title> with Spotify URI <spotify:track:...>".
+static char now_playing[160];
+static void stderrLine(void *context, const char *line) {
+    (void)context;
+    const char *start = strstr(line, "Loading <");
+    if (!start) return;
+    start += 9;
+    const char *end = strstr(start, "> with Spotify URI");
+    if (!end) return;
+    size_t n = (size_t)(end - start);
+    if (n >= sizeof(now_playing)) n = sizeof(now_playing) - 1;
+    memcpy(now_playing, start, n);
+    now_playing[n] = 0;
+}
 static int64_t pcmSink(void *context, const void *bytes, size_t count) {
     (void)context;
     if (loginText(bytes, count)) return (int64_t)count;
@@ -171,7 +185,8 @@ static void *librespotThread(void *argument) {
                          .mounts = {{"/game", ROOT "/game"}},
                          .mount_count = 1,
                          .arguments = arguments,
-                         .stdout_sink = pcmSink};
+                         .stdout_sink = pcmSink,
+                         .stderr_line = stderrLine};
     atomic_store(&player_state, 1);
     bool ok = gameRun(&config);
     snprintf(player_failure, sizeof(player_failure), "%s", ok ? "librespot termino" : gameFailure());
@@ -203,18 +218,18 @@ static void drawScreen(const char *address, unsigned frame) {
             snprintf(shown, sizeof(shown), "%s", gameRecentLine(i));
             overlayText(60, 650 + (int)(i - first) * 26, shown, 20, 0xFFD080FF);
         }
+    } else if (pair_code[0] && !now_playing[0] && atomic_load(&pcm_bytes) == 0) {
+        overlayTextCentered(OVERLAY_WIDTH / 2, 560, "Inicia sesion: en tu movil o PC abre spotify.com/pair", 34, 0xE8E8E8FF);
+        snprintf(line, sizeof(line), "y escribe el codigo  %s", pair_code);
+        overlayTextCentered(OVERLAY_WIDTH / 2, 640, line, 52, 0x1DB954FF);
+        overlayTextCentered(OVERLAY_WIDTH / 2, 720, "Despues elige el dispositivo \"" DEVICE_NAME "\" en Spotify (Premium)", 28, 0xA0A0A0FF);
+    } else if (now_playing[0]) {
+        overlayTextCentered(OVERLAY_WIDTH / 2, 540, "Reproduciendo", 30, 0x1DB954FF);
+        overlayTextCentered(OVERLAY_WIDTH / 2, 610, now_playing, 46, 0xFFFFFFFF);
+        overlayTextCentered(OVERLAY_WIDTH / 2, 700, "Cruz: pausa / play     L1 / R1: anterior / siguiente     Arriba / Abajo: volumen", 26, 0xC8C8C8FF);
     } else {
-        if (pair_code[0]) {
-            overlayTextCentered(OVERLAY_WIDTH / 2, 530, "Inicia sesion: en tu movil o PC abre spotify.com/pair", 34, 0xE8E8E8FF);
-            snprintf(line, sizeof(line), "y escribe el codigo  %s", pair_code);
-            overlayTextCentered(OVERLAY_WIDTH / 2, 600, line, 52, 0x1DB954FF);
-            overlayTextCentered(OVERLAY_WIDTH / 2, 670, "Despues elige el dispositivo \"" DEVICE_NAME "\" en Spotify (Premium)", 28, 0xA0A0A0FF);
-        } else {
-            snprintf(line, sizeof(line), "Abre Spotify (Premium) y elige el dispositivo \"%s\"%s", DEVICE_NAME, dots[(frame / 30) % 4]);
-            overlayTextCentered(OVERLAY_WIDTH / 2, 560, line, 34, 0xE8E8E8FF);
-        }
-        snprintf(line, sizeof(line), "Audio recibido: %llu KB", atomic_load(&pcm_bytes) / 1024);
-        overlayTextCentered(OVERLAY_WIDTH / 2, 620, line, 30, 0xA0A0A0FF);
+        snprintf(line, sizeof(line), "Abre Spotify (Premium) y elige el dispositivo \"%s\"%s", DEVICE_NAME, dots[(frame / 30) % 4]);
+        overlayTextCentered(OVERLAY_WIDTH / 2, 600, line, 34, 0xE8E8E8FF);
     }
     snprintf(line, sizeof(line), "IP de la consola: %s", address);
     overlayTextCentered(OVERLAY_WIDTH / 2, 940, line, 24, 0xA0A0A0FF);
@@ -244,9 +259,19 @@ int main(void) {
             eglSwapBuffers(display, surface);
         }
         PlatformPad pad;
-        if (platformPadRead(&pad) && (pad.buttons & PLATFORM_PAD_CIRCLE)) {
-            diagnosticsTrace("Circle pressed: closing the title");
-            platformQuit();
+        static unsigned previous_buttons;
+        if (platformPadRead(&pad)) {
+            unsigned pressed = pad.buttons & ~previous_buttons;  // edges only
+            previous_buttons = pad.buttons;
+            if (pressed & PLATFORM_PAD_CROSS) gameSendLine("play_pause");
+            if (pressed & PLATFORM_PAD_R1) gameSendLine("next");
+            if (pressed & PLATFORM_PAD_L1) gameSendLine("prev");
+            if (pressed & PLATFORM_PAD_UP) gameSendLine("vol_up");
+            if (pressed & PLATFORM_PAD_DOWN) gameSendLine("vol_down");
+            if (pressed & PLATFORM_PAD_CIRCLE) {
+                diagnosticsTrace("Circle pressed: closing the title");
+                platformQuit();
+            }
         }
         sceKernelUsleep(16000);
     }

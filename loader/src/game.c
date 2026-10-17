@@ -40,6 +40,12 @@ static ElfExecutable mapped;
 static const char *failure = "";
 static int64_t (*stdout_sink)(void *context, const void *bytes, size_t count);
 static void *stdout_context;
+static void (*stderr_line)(void *context, const char *line);
+static void *stderr_context;
+static char input_ring[1024];
+static size_t input_head, input_tail;  // bytes in [tail, head) modulo size
+static atomic_flag input_lock = ATOMIC_FLAG_INIT;
+static _Atomic bool input_closed;
 static LinuxRuntimeExport exports[ELF_EXPORT_MAX];
 
 // ---- the client's stdout/stderr: whole lines go to the log ----------------------------------------------------------------------
@@ -76,7 +82,13 @@ static void observeLine(const char *line) {
     }
 }
 static void emitLine(int fd) {
-    if (fd == 2) remember(pending[fd], pending_bytes[fd]);
+    if (fd == 2) {
+        remember(pending[fd], pending_bytes[fd]);
+        if (stderr_line) {
+            pending[fd][pending_bytes[fd]] = 0;
+            stderr_line(stderr_context, pending[fd]);
+        }
+    }
     diagnosticsTrace("client.%s %.*s", fd == 1 ? "out" : "err", (int)pending_bytes[fd], pending[fd]);
     pending_bytes[fd] = 0;
 }
@@ -164,6 +176,10 @@ bool gameRun(const GameConfig *config) {
     memset(pending_bytes, 0, sizeof(pending_bytes));
     recent_count = 0;
     diagnosticsSetObserver(observeLine);
+    stderr_line = config->stderr_line;
+    stderr_context = config->stderr_context;
+    input_head = input_tail = 0;
+    atomic_store(&input_closed, false);
     stdout_sink = config->stdout_sink;
     stdout_context = config->stdout_context;
     linuxStdioSetConsoleSink(sink, NULL);
@@ -255,4 +271,35 @@ bool gameRun(const GameConfig *config) {
                      (int)termination.kind, termination.status, (unsigned long long)((platformMonotonicNs() - begin) / 1000000u));
     if (!ok) failure = "The game stopped with an error.";
     return ok;
+}
+
+void gameSendLine(const char *line) {
+    while (atomic_flag_test_and_set_explicit(&input_lock, memory_order_acquire)) linuxThreadYield();
+    for (const char *p = line; *p; ++p) {
+        size_t next = (input_head + 1) % sizeof(input_ring);
+        if (next == input_tail) break;  // full: drop
+        input_ring[input_head] = *p;
+        input_head = next;
+    }
+    size_t next = (input_head + 1) % sizeof(input_ring);
+    if (next != input_tail) {
+        input_ring[input_head] = '\n';
+        input_head = next;
+    }
+    atomic_flag_clear_explicit(&input_lock, memory_order_release);
+}
+int64_t gameStdinRead(void *buffer, size_t count) {
+    unsigned char *out = buffer;
+    for (;;) {
+        while (atomic_flag_test_and_set_explicit(&input_lock, memory_order_acquire)) linuxThreadYield();
+        size_t n = 0;
+        while (n < count && input_tail != input_head) {
+            out[n++] = (unsigned char)input_ring[input_tail];
+            input_tail = (input_tail + 1) % sizeof(input_ring);
+        }
+        atomic_flag_clear_explicit(&input_lock, memory_order_release);
+        if (n) return (int64_t)n;
+        if (atomic_load(&run.returned) || atomic_load(&input_closed) || linuxRuntimeTerminationKindUnlocked() != LINUX_TERMINATION_NONE) return 0;
+        platformSleepNs(20u * 1000000u);
+    }
 }

@@ -35,6 +35,10 @@ jobs:
           sed -i 's/SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), \*port)/SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), *port)/' discovery/src/server.rs
           grep -n "UNSPECIFIED" discovery/src/server.rs
 
+      # The title drives librespot with one-line commands on stdin (play_pause, next, prev, vol_up...).
+      - name: Patch librespot to take commands on stdin
+        run: python3 tools/patch_librespot.py librespot
+
       # main is exported so the loader can find it (it looks the entry up by name); panic=abort drops the unwinding machinery.
       - name: Build (rustls, compiled-in certificates, mDNS, pipe/subprocess audio only)
         working-directory: librespot
@@ -42,7 +46,20 @@ jobs:
           # max-page-size: the console's pages are 16 KiB; a page can never hold both code and writable data, so segments are kept apart by 16 KiB.
           RUSTFLAGS: "-C link-arg=-Wl,--export-dynamic-symbol=main -C link-arg=-Wl,-z,max-page-size=16384"
           CARGO_PROFILE_RELEASE_PANIC: abort
-        run: cargo build --release --no-default-features --features "rustls-tls-webpki-roots with-libmdns"
+        run: |
+          set -o pipefail
+          cargo build --release --no-default-features --features "rustls-tls-webpki-roots with-libmdns" 2>&1 | tee ../cargo.log
+
+      - name: Publish the log of a failed build
+        if: failure()
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/log" && tail -n 300 cargo.log > "$RUNNER_TEMP/log/cargo-log.txt" || echo "no log" > "$RUNNER_TEMP/log/cargo-log.txt"
+          cd "$RUNNER_TEMP/log"
+          git init -q && git checkout -q -b log
+          git config user.name "ci" && git config user.email "ci@users.noreply.github.com"
+          git add . && git commit -q -m "cargo log $GITHUB_SHA"
+          git push -q --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" log:ci-librespot-log
 
       - name: Check segment alignment (16 KiB pages)
         run: |

@@ -4,6 +4,7 @@
 // Changes: native clocks; imports matched by name and provider (the x86-64 client mixes glibc versions); bindings added for the
 // x86-64 client and libraries (__tls_get_addr, madvise, ctype tables, aligned allocation).
 #include "linux_abi.h"
+#include "game.h"
 #include "linux_vm.h"
 #include "linux_threads.h"
 #include "linux_sync.h"
@@ -124,7 +125,7 @@ static int pageSize(void) { return 4096; }
 static int64_t clientWrite(int fd, const void *buffer, size_t count) {
     return fd == 1 || fd == 2 ? linuxStdioWriteConsoleFd(fd, buffer, count) : linuxAbiWrite(fd, buffer, count);
 }
-static int64_t clientRead(int fd, void *buffer, size_t count) { return fd == 0 ? 0 : linuxAbiRead(fd, buffer, count); }
+static int64_t clientRead(int fd, void *buffer, size_t count) { return fd == 0 ? gameStdinRead(buffer, count) : linuxAbiRead(fd, buffer, count); }
 int64_t linuxAbiSysconf(int name) {
     // _SC_PAGESIZE is 30 in the client's glibc ABI, not newlib's enum.
     if (name == 30) return 4096;

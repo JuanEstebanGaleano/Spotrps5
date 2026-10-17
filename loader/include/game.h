@@ -22,6 +22,9 @@ typedef struct {
     // Spotrps5: what the program writes to stdout (librespot's pipe backend writes raw PCM there). NULL: stdout is logged as text.
     int64_t (*stdout_sink)(void *context, const void *bytes, size_t count);
     void *stdout_context;
+    // Spotrps5: every whole line the program writes to stderr (to follow what it is playing).
+    void (*stderr_line)(void *context, const char *line);
+    void *stderr_context;
 } GameConfig;
 
 // Runs the official PokeMMO client (its `main`) inside the adapters and waits for it. True when main returned 0 or exit(0) was called.
@@ -30,3 +33,6 @@ const char *gameFailure(void);  // a short sentence, valid after gameRun returne
 unsigned gameRecentCount(void);            // lines kept for the screen: the program's last stderr lines, refused imports, how it ended
 const char *gameRecentLine(unsigned index);  // 0 is the oldest
 void gameNote(const char *text);
+// Spotrps5: a line for the program's stdin (its read(0) blocks until there is one). The newline is added.
+void gameSendLine(const char *line);
+int64_t gameStdinRead(void *buffer, size_t count);  // used by the adapters for read(0): blocks; 0 (end of input) once the program has ended
