@@ -560,7 +560,7 @@ static PlatformHttp *httpRequest(const char *method, const char *url, const Plat
     }
     h->template_id = h->connection = h->request = -1;
     h->length = -1;
-    int rc = h->template_id = sceHttpCreateTemplate(http_context, "PokeMMO-Prospero", 2 /* HTTP/1.1 */, 1);
+    int rc = h->template_id = sceHttpCreateTemplate(http_context, "Spotrps5", 2 /* HTTP/1.1 */, 1);
     const char *stage = "template";
     if (rc >= 0) {
         sceHttpSetResolveTimeOut(h->template_id, 15u * 1000000u);

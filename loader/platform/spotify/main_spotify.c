@@ -25,7 +25,7 @@ const size_t ps5_opengl_heap_size = 768u << 20;
 
 int sceKernelUsleep(unsigned int microseconds);
 
-#define MILESTONE "spotrps5-3g"
+#define MILESTONE "spotrps5-3h"
 #define DEVICE_NAME "Spotrps5"
 #define ROOT "/download0/spotrps5"
 

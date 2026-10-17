@@ -35,7 +35,7 @@ loader: env-check
 	bash scripts/runtime-libs.sh build/loader-assets/lib
 	cp assets/settings/defaults.properties build/loader-assets/defaults.properties
 	bash scripts/build-title.sh --title-id $(LOADER_TITLE_ID) --name "PokeMMO Prospero" \
-		--sources loader/src --sources loader/platform/ps5 --sources loader/platform/pokemmo --include loader/include --zlib \
+		--sources loader/src --sources loader/pokemmo/src --sources loader/platform/ps5 --sources loader/platform/pokemmo --include loader/include --include loader/pokemmo/include --zlib \
 		--assets build/loader-assets --content-suffix LOADER --download-mib 2048 \
 		--branding assets/branding
 	@mkdir -p dist && cp build/titles/$(LOADER_TITLE_ID)/dist/$(LOADER_TITLE_ID).zip dist/pokemmo-prospero-loader-$(LOADER_TITLE_ID).zip

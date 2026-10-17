@@ -181,7 +181,7 @@ bool gameRun(const GameConfig *config) {
     }
     if (ok) ok = elfExecutableOpenResolved(config->client_path, &mapped, linuxTrapResolve, NULL);
     if (!ok || mapped.unresolved || mapped.unsupported) {
-        if (!*failure) failure = "The PokeMMO client cannot be read (missing, corrupted or not enough memory).";
+        if (!*failure) failure = "The program cannot be read (missing, corrupted or not enough memory).";
         return false;
     }
     linuxDlSetVirtualLibraries(config->virtual_libraries, config->virtual_count);
@@ -203,11 +203,11 @@ bool gameRun(const GameConfig *config) {
                      (unsigned long long)run.main_entry);
     logState("before_start");
     if (!run.main_entry) {
-        failure = "The PokeMMO client has no entry point.";
+        failure = "The program has no entry point.";
         return false;
     }
 
-    static char program[] = "PokeMMO";
+    static char program[] = "librespot";
     run.argv[run.argc++] = program;
     for (unsigned i = 0; config->arguments && config->arguments[i] && run.argc < (int)MAX_ARGUMENTS + 1; ++i) run.argv[run.argc++] = (char *)config->arguments[i];
     run.argv[run.argc] = NULL;
