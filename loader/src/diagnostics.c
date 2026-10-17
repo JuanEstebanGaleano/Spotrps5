@@ -12,11 +12,15 @@ static atomic_bool enabled = true;
 void diagnosticsSetEnabled(bool value) { atomic_store_explicit(&enabled, value, memory_order_release); }
 bool diagnosticsEnabled(void) { return atomic_load_explicit(&enabled, memory_order_acquire); }
 
+static void (*line_observer)(const char *line);
+void diagnosticsSetObserver(void (*observer)(const char *line)) { line_observer = observer; }
 void diagnosticsTraceV(const char *format, va_list args) {
-    if (!diagnosticsEnabled()) return;
+    void (*observer)(const char *) = line_observer;
+    if (!diagnosticsEnabled() && !observer) return;
     char line[1024];
     vsnprintf(line, sizeof(line), format, args);
-    platformLogLine(line);
+    if (observer) observer(line);
+    if (diagnosticsEnabled()) platformLogLine(line);
 }
 
 void diagnosticsTrace(const char *format, ...) {

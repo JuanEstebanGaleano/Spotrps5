@@ -25,7 +25,7 @@ const size_t ps5_opengl_heap_size = 768u << 20;
 
 int sceKernelUsleep(unsigned int microseconds);
 
-#define MILESTONE "spotrps5-3f"
+#define MILESTONE "spotrps5-3g"
 #define DEVICE_NAME "Spotrps5"
 #define ROOT "/download0/spotrps5"
 
@@ -199,7 +199,7 @@ static void drawScreen(const char *address, unsigned frame) {
         overlayTextCentered(OVERLAY_WIDTH / 2, 605, player_failure, 26, 0xA0A0A0FF);
         unsigned lines = gameRecentCount(), first = lines > 9 ? lines - 9 : 0;
         for (unsigned i = first; i < lines; ++i) {
-            char shown[100];
+            char shown[150];
             snprintf(shown, sizeof(shown), "%s", gameRecentLine(i));
             overlayText(60, 650 + (int)(i - first) * 26, shown, 20, 0xFFD080FF);
         }

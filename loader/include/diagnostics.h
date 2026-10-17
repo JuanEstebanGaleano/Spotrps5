@@ -10,3 +10,4 @@ void diagnosticsSetEnabled(bool enabled);
 bool diagnosticsEnabled(void);
 void diagnosticsTrace(const char *format, ...) __attribute__((format(printf, 1, 2)));  // one line; the newline is added
 void diagnosticsTraceV(const char *format, va_list args);
+void diagnosticsSetObserver(void (*observer)(const char *line));  // sees every formatted line (even with the log disabled); NULL removes it

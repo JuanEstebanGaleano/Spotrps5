@@ -68,6 +68,13 @@ const char *gameRecentLine(unsigned index) {  // 0 is the oldest of the kept lin
     unsigned count = gameRecentCount();
     return index < count ? recent[(recent_count - count + index) % RECENT_LINES] : "";
 }
+// Failures reported by the loader itself (mapping the program, refused imports...) are kept for the screen too.
+static void observeLine(const char *line) {
+    if (strstr(line, "=FAIL") || strstr(line, "=ERROR") || strstr(line, "unresolved=") || !strncmp(line, "elf.", 4)) {
+        if (strstr(line, "=PASS") && !strstr(line, "unresolved=")) return;
+        remember(line, strlen(line));
+    }
+}
 static void emitLine(int fd) {
     if (fd == 2) remember(pending[fd], pending_bytes[fd]);
     diagnosticsTrace("client.%s %.*s", fd == 1 ? "out" : "err", (int)pending_bytes[fd], pending[fd]);
@@ -156,6 +163,7 @@ bool gameRun(const GameConfig *config) {
     memset(&run, 0, sizeof(run));
     memset(pending_bytes, 0, sizeof(pending_bytes));
     recent_count = 0;
+    diagnosticsSetObserver(observeLine);
     stdout_sink = config->stdout_sink;
     stdout_context = config->stdout_context;
     linuxStdioSetConsoleSink(sink, NULL);
