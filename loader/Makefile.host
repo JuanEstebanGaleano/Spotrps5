@@ -6,7 +6,7 @@ BUILD := build/host
 GL_SOURCES := loader/src/overlay.c loader/src/overlay_assets.c
 SOURCES := $(filter-out $(GL_SOURCES),$(wildcard loader/src/*.c)) $(wildcard loader/platform/host/*.c)
 OBJECTS := $(patsubst %.c,$(BUILD)/%.o,$(SOURCES))
-CFLAGS := -std=gnu11 -O1 -g -fno-omit-frame-pointer -Wall -Wextra -Wno-unused-parameter -Iloader/include -D_GNU_SOURCE -pthread
+CFLAGS := -std=gnu11 -O1 -g -fno-omit-frame-pointer -Wall -Wextra -Wno-unused-parameter -Iloader/include -Iloader/pokemmo/include -D_GNU_SOURCE -pthread
 LDLIBS := -lz -lm -pthread
 
 $(BUILD)/prospero-host: $(OBJECTS)

@@ -54,7 +54,7 @@ spotify: env-check
 	@if [[ -f "$(LIBRESPOT_BIN)" ]]; then cp "$(LIBRESPOT_BIN)" build/spotify-assets/librespot; \
 	 else echo "warning: no librespot at $(LIBRESPOT_BIN): the title is built without it"; fi
 	bash scripts/build-title.sh --title-id $(SPOTIFY_TITLE_ID) --name "Spotrps5" \
-		--sources loader/src --sources loader/platform/ps5 --sources loader/platform/spotify --include loader/include --zlib \
+		--sources loader/src --sources loader/platform/ps5 --sources loader/platform/spotify --include loader/include --include loader/pokemmo/include --zlib \
 		--assets build/spotify-assets --content-suffix SPOTRPS5 --download-mib 512 \
 		--branding assets/branding-spotify
 	@mkdir -p dist && cp build/titles/$(SPOTIFY_TITLE_ID)/dist/$(SPOTIFY_TITLE_ID).zip dist/spotrps5-$(SPOTIFY_TITLE_ID).zip
