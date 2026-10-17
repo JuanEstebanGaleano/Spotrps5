@@ -1,0 +1,53 @@
+bash scripts/build-title.sh --title-id PPSA98077 --name "Spotrps5" \
+	--sources loader/src --sources loader/platform/ps5 --sources loader/platform/spotify --include loader/include --zlib \
+	--assets build/spotify-assets --content-suffix SPOTRPS5 --download-mib 512 \
+	--branding assets/branding-spotify
+==> [libc] Generating the missing or outdated runtime
+==> [ninja] 4 jobs; compiler cache: ccache
+[1/7] CXX self_container.o
+[2/7] CXX elf_object.o
+[3/7] CXX native_app_builder.o
+[4/7] CXX sce_module_writer.o
+[5/7] LINK ps5-native-tool
+[6/7] CXX libc_builder.o
+[7/7] LINK libc-builder
+built clean-room runtime
+wrote 1335962 bytes: /work/build/titles/PPSA98077/build/runtime-shim/libc-a.raw.elf
+sha256 8ee6e124993e1af26420cb455890fd002f5d6c7e78883c860ce45734e7d002bb
+built clean-room runtime
+wrote 1335962 bytes: /work/build/titles/PPSA98077/build/runtime-shim/libc-b.raw.elf
+sha256 8ee6e124993e1af26420cb455890fd002f5d6c7e78883c860ce45734e7d002bb
+wrote 1284674 bytes: /work/build/titles/PPSA98077/build/runtime-shim/libc-a.prx
+sha256 e6ff45d16adf687855cc3b33b0c8a4132b6504360b221e0a34c7e99fb3ba0036
+wrote 1284674 bytes: /work/build/titles/PPSA98077/build/runtime-shim/libc-b.prx
+sha256 e6ff45d16adf687855cc3b33b0c8a4132b6504360b221e0a34c7e99fb3ba0036
+libc.prx: OK
+Rebuilt clean-room runtime.
+Raw SHA-256:    8ee6e124993e1af26420cb455890fd002f5d6c7e78883c860ce45734e7d002bb
+Signed SHA-256: e6ff45d16adf687855cc3b33b0c8a4132b6504360b221e0a34c7e99fb3ba0036
+==> [app] Compiling, linking, signing, and assembling the app folder
+Presentation assets validated: /work/build/titles/PPSA98077/sce_sys
+==> [ninja] 4 jobs; compiler cache: ccache
+ninja: no work to do.
+==> [ninja] 4 jobs; compiler cache: ccache
+[1/46] CC diagnostics.c.o
+[2/46] CC app_heap.c.o
+[3/46] CC elf_executable.c.o
+[4/46] CC main_spotify.c.o
+[5/46] CC platform_ps5.c.o
+[6/46] CC elf_image.c.o
+[7/46] CC elf_layout.c.o
+[8/46] CC elf_versions.c.o
+[9/46] CC linux_al.c.o
+FAILED: /work/build/titles/PPSA98077/build/obj/src/loader_src/linux_al.c.o 
+env PS5_PAYLOAD_SDK=/work/build/titles/PPSA98077/.deps/native/ps5-payload-sdk PS5_CLANG=/usr/bin/clang-18 USE_CCACHE=1 sh /work/build/titles/PPSA98077/tooling/prospero-clang18 -std=c11 -O2 -Wall -Wextra -ffunction-sections -fdata-sections -DGL_GLEXT_PROTOTYPES=1 -I/work/build/titles/PPSA98077/include -MD -MF /work/build/titles/PPSA98077/build/obj/src/loader_src/linux_al.c.o.d -c /work/build/titles/PPSA98077/src/loader_src/linux_al.c -o /work/build/titles/PPSA98077/build/obj/src/loader_src/linux_al.c.o 
+/work/build/titles/PPSA98077/src/loader_src/linux_al.c:5:10: fatal error: 'linux_sdl.h' file not found
+    5 | #include "linux_sdl.h"
+      |          ^~~~~~~~~~~~~
+1 error generated.
+[10/46] CC game.c.o
+[11/46] CC linux_abi.c.o
+[12/46] CC linux_audio.c.o
+ninja: build stopped: subcommand failed.
+make[1]: *** [Makefile:102: app] Error 1
+make: *** [Makefile:54: spotify] Error 2
