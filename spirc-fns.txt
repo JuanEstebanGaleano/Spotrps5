@@ -1,0 +1,19 @@
+290:    pub fn shutdown(&self) -> Result<(), Error> {
+297:    pub fn play(&self) -> Result<(), Error> {
+304:    pub fn play_pause(&self) -> Result<(), Error> {
+311:    pub fn pause(&self) -> Result<(), Error> {
+321:    pub fn prev(&self) -> Result<(), Error> {
+328:    pub fn next(&self) -> Result<(), Error> {
+335:    pub fn volume_up(&self) -> Result<(), Error> {
+342:    pub fn volume_down(&self) -> Result<(), Error> {
+353:    pub fn shuffle(&self, shuffle: bool) -> Result<(), Error> {
+360:    pub fn repeat(&self, repeat: bool) -> Result<(), Error> {
+369:    pub fn repeat_track(&self, repeat: bool) -> Result<(), Error> {
+376:    pub fn set_volume(&self, volume: u16) -> Result<(), Error> {
+386:    pub fn set_position_ms(&self, position_ms: u32) -> Result<(), Error> {
+395:    pub fn load(&self, command: LoadRequest) -> Result<(), Error> {
+404:    pub fn add_to_queue(&self, uri: SpotifyUri) -> Result<(), Error> {
+424:    pub fn clear_queue(&self) -> Result<(), Error> {
+431:    pub fn disconnect(&self, pause: bool) -> Result<(), Error> {
+438:    pub fn activate(&self) -> Result<(), Error> {
+445:    pub fn transfer(&self, transfer_request: Option<TransferRequest>) -> Result<(), Error> {
