@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Publishes a few librespot sources (at the pinned commit) to the ci-peek branch so they can be read without the Actions logs.
+name: peek
+on:
+  workflow_dispatch:
+  push:
+    paths: [".github/workflows/peek.yml"]
+permissions:
+  contents: write
+env:
+  LIBRESPOT_REV: 4a005903e078d512456fb008aaa9ba6246881bd9
+jobs:
+  peek:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Get librespot and publish main.rs
+        run: |
+          set -euo pipefail
+          git init -q librespot && cd librespot
+          git fetch -q --depth 1 https://github.com/librespot-org/librespot.git "$LIBRESPOT_REV"
+          git checkout -q FETCH_HEAD
+          mkdir -p "$RUNNER_TEMP/out"
+          cp src/main.rs "$RUNNER_TEMP/out/main.rs"
+          cp core/src/token.rs "$RUNNER_TEMP/out/token.rs" || true
+          cp core/src/session.rs "$RUNNER_TEMP/out/session.rs" || true
+          cd "$RUNNER_TEMP/out"
+          git init -q && git checkout -q -b peek
+          git config user.name ci && git config user.email ci@users.noreply.github.com
+          git add . && git commit -q -m peek
+          git push -q --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" peek:ci-peek

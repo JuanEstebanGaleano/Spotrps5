@@ -119,11 +119,15 @@ static struct {
     void (*DisableVertexAttribArray)(GLuint);
     void (*VertexAttribPointer)(GLuint, GLint, GLenum, GLboolean, GLsizei, const void *);
     void (*DrawArrays)(GLenum, GLint, GLsizei);
+    void (*Scissor)(GLint, GLint, GLsizei, GLsizei);
+    void (*DeleteTextures)(GLsizei, const GLuint *);
 } gl;
 
 static int gl_state;  // 0 not tried, 1 ready, -1 unusable
 static EGLContext objects_context;
 static GLuint program, font_texture, logo_texture;
+static bool rounded_ok;           // the shader with rounded shapes works; otherwise plain rectangles are drawn
+static unsigned generation;       // counts the times the objects were made: images remake their texture when theirs differs
 static GLint uniform_texture, uniform_view;
 static uint32_t *font_pixels, *logo_pixels;
 static GLint saved_program, saved_framebuffer, saved_array_buffer, saved_unpack, saved_active;
@@ -132,12 +136,15 @@ static unsigned view_width, view_height;
 // One batch of triangles, all with the same texture.
 typedef struct {
     float x, y, u, v;
+    float shape[4];   // the position inside the shape, from its centre, and its half size (pixels)
+    float params[2];  // corner radius (negative: not a shape, plain quad), ring thickness (0: filled)
     uint8_t rgba[4];
 } Vertex;
 #define MAX_VERTICES 12288u  // a multiple of 6
 static Vertex vertices[MAX_VERTICES];
 static unsigned vertex_count;
 static GLuint batch_texture;
+static bool clipped;
 static float white_u, white_v;  // a texel of the font atlas that is solid white: rectangles use it
 
 static bool loadFunction(void *slot, const char *name) {
@@ -156,7 +163,7 @@ static bool loadGl(void) {
     LOAD(BlendEquation) LOAD(ColorMask) LOAD(PolygonMode) LOAD(Viewport) LOAD(BindFramebuffer) LOAD(Enable) LOAD(Disable) LOAD(ClearColor) LOAD(Clear)
     LOAD(ReadPixels) LOAD(CreateShader) LOAD(ShaderSource) LOAD(CompileShader) LOAD(GetShaderiv) LOAD(GetShaderInfoLog) LOAD(CreateProgram)
     LOAD(AttachShader) LOAD(BindAttribLocation) LOAD(LinkProgram) LOAD(GetProgramiv) LOAD(GetUniformLocation) LOAD(UseProgram) LOAD(Uniform1i)
-    LOAD(Uniform2f) LOAD(EnableVertexAttribArray) LOAD(DisableVertexAttribArray) LOAD(VertexAttribPointer) LOAD(DrawArrays)
+    LOAD(Uniform2f) LOAD(EnableVertexAttribArray) LOAD(DisableVertexAttribArray) LOAD(VertexAttribPointer) LOAD(DrawArrays) LOAD(Scissor) LOAD(DeleteTextures)
 #undef LOAD
     return true;
 }
@@ -210,25 +217,50 @@ static GLuint compile(GLenum type, const char *source) {
     return shader;
 }
 // GLSL 1.20: the game's context is OpenGL 2.1. Positions are in virtual-screen pixels.
-static bool makeObjects(void) {
-    static const char *const vertex_source = "#version 120\n"
-                                             "attribute vec2 position; attribute vec2 coordinate; attribute vec4 colour;\n"
-                                             "uniform vec2 view; varying vec2 uv; varying vec4 tint;\n"
-                                             "void main() { uv = coordinate; tint = colour;\n"
-                                             "  gl_Position = vec4(position.x * 2.0 / view.x - 1.0, 1.0 - position.y * 2.0 / view.y, 0.0, 1.0); }\n";
-    static const char *const fragment_source = "#version 120\n"
-                                               "uniform sampler2D image; varying vec2 uv; varying vec4 tint;\n"
-                                               "void main() { gl_FragColor = texture2D(image, uv) * tint; }\n";
-    program = gl.CreateProgram();
-    gl.AttachShader(program, compile(GL_VERTEX_SHADER, vertex_source));
-    gl.AttachShader(program, compile(GL_FRAGMENT_SHADER, fragment_source));
-    gl.BindAttribLocation(program, 0, "position");
-    gl.BindAttribLocation(program, 1, "coordinate");
-    gl.BindAttribLocation(program, 2, "colour");
-    gl.LinkProgram(program);
+static const char *const vertex_source = "#version 120\n"
+                                         "attribute vec2 position; attribute vec2 coordinate; attribute vec4 colour; attribute vec4 shape; attribute vec2 params;\n"
+                                         "uniform vec2 view; varying vec2 uv; varying vec4 tint; varying vec4 shp; varying vec2 prm;\n"
+                                         "void main() { uv = coordinate; tint = colour; shp = shape; prm = params;\n"
+                                         "  gl_Position = vec4(position.x * 2.0 / view.x - 1.0, 1.0 - position.y * 2.0 / view.y, 0.0, 1.0); }\n";
+static const char *const fragment_rounded = "#version 120\n"
+                                            "uniform sampler2D image; varying vec2 uv; varying vec4 tint; varying vec4 shp; varying vec2 prm;\n"
+                                            "void main() {\n"
+                                            "  vec4 c = texture2D(image, uv) * tint;\n"
+                                            "  if (prm.x >= 0.0) {\n"
+                                            "    float r = min(prm.x, min(shp.z, shp.w));\n"
+                                            "    vec2 q = abs(shp.xy) - shp.zw + vec2(r);\n"
+                                            "    float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;\n"
+                                            "    float aa = 1.0;\n"
+                                            "    float a = clamp(0.5 - d / aa, 0.0, 1.0);\n"
+                                            "    if (prm.y > 0.0) a *= clamp(0.5 + (d + prm.y) / aa, 0.0, 1.0);\n"
+                                            "    c.a *= a;\n"
+                                            "  }\n"
+                                            "  gl_FragColor = c; }\n";
+static const char *const fragment_plain = "#version 120\n"
+                                          "uniform sampler2D image; varying vec2 uv; varying vec4 tint; varying vec4 shp; varying vec2 prm;\n"
+                                          "void main() { gl_FragColor = texture2D(image, uv) * tint; }\n";
+static GLuint linkProgram(const char *fragment_source) {
+    GLuint made = gl.CreateProgram();
+    gl.AttachShader(made, compile(GL_VERTEX_SHADER, vertex_source));
+    gl.AttachShader(made, compile(GL_FRAGMENT_SHADER, fragment_source));
+    gl.BindAttribLocation(made, 0, "position");
+    gl.BindAttribLocation(made, 1, "coordinate");
+    gl.BindAttribLocation(made, 2, "colour");
+    gl.BindAttribLocation(made, 3, "shape");
+    gl.BindAttribLocation(made, 4, "params");
+    gl.LinkProgram(made);
     GLint linked = 0;
-    gl.GetProgramiv(program, GL_LINK_STATUS, &linked);
-    if (!linked) {
+    gl.GetProgramiv(made, GL_LINK_STATUS, &linked);
+    return linked ? made : 0;
+}
+static bool makeObjects(void) {
+    program = linkProgram(fragment_rounded);
+    rounded_ok = program != 0;
+    if (!program) {
+        diagnosticsTrace("overlay: rounded shader failed, using plain rectangles");
+        program = linkProgram(fragment_plain);
+    }
+    if (!program) {
         diagnosticsTrace("overlay: program link failed");
         return false;
     }
@@ -236,7 +268,8 @@ static bool makeObjects(void) {
     uniform_view = gl.GetUniformLocation(program, "view");
     font_texture = upload(font_pixels, overlay_font_width, overlay_font_height);
     logo_texture = upload(logo_pixels, overlay_logo_width, overlay_logo_height);
-    diagnosticsTrace("overlay: objects made program=%u font=%u logo=%u gl_error=0x%x", program, font_texture, logo_texture, gl.GetError());
+    ++generation;
+    diagnosticsTrace("overlay: objects made program=%u font=%u rounded=%d gl_error=0x%x", program, font_texture, rounded_ok, gl.GetError());
     return true;
 }
 
@@ -291,7 +324,10 @@ bool overlayBegin(unsigned width, unsigned height) {
     gl.EnableVertexAttribArray(0);
     gl.EnableVertexAttribArray(1);
     gl.EnableVertexAttribArray(2);
+    gl.EnableVertexAttribArray(3);
+    gl.EnableVertexAttribArray(4);
     vertex_count = 0;
+    clipped = false;
     batch_texture = font_texture;
     return true;
 }
@@ -301,6 +337,8 @@ static void flush(void) {
     gl.VertexAttribPointer(0, 2, GL_FLOAT, 0, sizeof(Vertex), &vertices[0].x);
     gl.VertexAttribPointer(1, 2, GL_FLOAT, 0, sizeof(Vertex), &vertices[0].u);
     gl.VertexAttribPointer(2, 4, GL_UNSIGNED_BYTE, 1, sizeof(Vertex), vertices[0].rgba);
+    gl.VertexAttribPointer(3, 4, GL_FLOAT, 0, sizeof(Vertex), vertices[0].shape);
+    gl.VertexAttribPointer(4, 2, GL_FLOAT, 0, sizeof(Vertex), vertices[0].params);
     gl.DrawArrays(GL_TRIANGLES, 0, (GLsizei)vertex_count);
     vertex_count = 0;
 }
@@ -318,21 +356,39 @@ void overlayEnd(void) {
     gl.BindFramebuffer(GL_FRAMEBUFFER, (GLuint)saved_framebuffer);
 }
 
-static void quad(GLuint texture, float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1, uint32_t rgba) {
+bool overlayRoundedAvailable(void) { return rounded_ok; }
+
+// A quad with a colour at its top and another at its bottom; radius < 0: plain, otherwise a rounded shape (ring when thickness > 0).
+static void quadEx(GLuint texture, float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1, uint32_t top, uint32_t bottom,
+                   float radius, float thickness) {
     if (texture != batch_texture || vertex_count + 6 > MAX_VERTICES) {
         flush();
         batch_texture = texture;
     }
-    const uint8_t c[4] = {(uint8_t)(rgba >> 24), (uint8_t)(rgba >> 16), (uint8_t)(rgba >> 8), (uint8_t)rgba};
-    const float corners[6][4] = {{x0, y0, u0, v0}, {x1, y0, u1, v0}, {x1, y1, u1, v1}, {x0, y0, u0, v0}, {x1, y1, u1, v1}, {x0, y1, u0, v1}};
+    if (!rounded_ok) radius = -1.0f;
+    const uint8_t ct[4] = {(uint8_t)(top >> 24), (uint8_t)(top >> 16), (uint8_t)(top >> 8), (uint8_t)top};
+    const uint8_t cb[4] = {(uint8_t)(bottom >> 24), (uint8_t)(bottom >> 16), (uint8_t)(bottom >> 8), (uint8_t)bottom};
+    const float hw = (x1 - x0) / 2, hh = (y1 - y0) / 2;
+    // x, y, u, v, local x, local y, is bottom
+    const float corners[6][7] = {{x0, y0, u0, v0, -hw, -hh, 0}, {x1, y0, u1, v0, hw, -hh, 0}, {x1, y1, u1, v1, hw, hh, 1},
+                                 {x0, y0, u0, v0, -hw, -hh, 0}, {x1, y1, u1, v1, hw, hh, 1},  {x0, y1, u0, v1, -hw, hh, 1}};
     for (unsigned i = 0; i < 6; ++i) {
         Vertex *v = &vertices[vertex_count++];
         v->x = corners[i][0];
         v->y = corners[i][1];
         v->u = corners[i][2];
         v->v = corners[i][3];
-        memcpy(v->rgba, c, 4);
+        v->shape[0] = corners[i][4];
+        v->shape[1] = corners[i][5];
+        v->shape[2] = radius >= 0 ? hw - 1.0f : hw;  // shaped quads are made one pixel larger all round, for the edge's anti-aliasing
+        v->shape[3] = radius >= 0 ? hh - 1.0f : hh;
+        v->params[0] = radius;
+        v->params[1] = thickness;
+        memcpy(v->rgba, corners[i][6] > 0.5f ? cb : ct, 4);
     }
+}
+static void quad(GLuint texture, float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1, uint32_t rgba) {
+    quadEx(texture, x0, y0, x1, y1, u0, v0, u1, v1, rgba, rgba, -1.0f, 0.0f);
 }
 void overlayClear(uint32_t rgba) {
     flush();
@@ -340,27 +396,90 @@ void overlayClear(uint32_t rgba) {
     gl.Clear(GL_COLOR_BUFFER_BIT);
 }
 void overlayRect(float x, float y, float w, float h, uint32_t rgba) { quad(font_texture, x, y, x + w, y + h, white_u, white_v, white_u, white_v, rgba); }
+void overlayRectGradient(float x, float y, float w, float h, uint32_t top, uint32_t bottom) {
+    quadEx(font_texture, x, y, x + w, y + h, white_u, white_v, white_u, white_v, top, bottom, -1.0f, 0.0f);
+}
 void overlayFrame(float x, float y, float w, float h, float t, uint32_t rgba) {
     overlayRect(x, y, w, t, rgba);
     overlayRect(x, y + h - t, w, t, rgba);
     overlayRect(x, y + t, t, h - 2 * t, rgba);
     overlayRect(x + w - t, y + t, t, h - 2 * t, rgba);
 }
-static const OverlayGlyph *glyph(unsigned char code) {
-    const OverlayGlyph *g = code < 128 ? &overlay_glyphs[code] : NULL;
-    return g && g->width ? g : &overlay_glyphs['?'];
+void overlayRoundRect(float x, float y, float w, float h, float radius, uint32_t rgba) {
+    quadEx(font_texture, x - 1, y - 1, x + w + 1, y + h + 1, white_u, white_v, white_u, white_v, rgba, rgba, radius, 0.0f);
 }
-float overlayTextWidth(const char *text, float size) {
-    float scale = size / (float)overlay_font_line, width = 0;
-    for (const unsigned char *p = (const unsigned char *)text; *p; ++p) width += glyph(*p)->advance * scale;
-    return width;
+void overlayRoundGradient(float x, float y, float w, float h, float radius, uint32_t top, uint32_t bottom) {
+    quadEx(font_texture, x - 1, y - 1, x + w + 1, y + h + 1, white_u, white_v, white_u, white_v, top, bottom, radius, 0.0f);
 }
-float overlayText(float x, float y, const char *text, float size, uint32_t rgba) {
+void overlayRoundFrame(float x, float y, float w, float h, float radius, float thickness, uint32_t rgba) {
+    if (!rounded_ok) {
+        overlayFrame(x, y, w, h, thickness, rgba);
+        return;
+    }
+    quadEx(font_texture, x - 1, y - 1, x + w + 1, y + h + 1, white_u, white_v, white_u, white_v, rgba, rgba, radius, thickness);
+}
+void overlayCircle(float cx, float cy, float radius, uint32_t rgba) { overlayRoundRect(cx - radius, cy - radius, radius * 2, radius * 2, radius, rgba); }
+void overlayClip(float x, float y, float w, float h) {
+    flush();
+    float sx = (float)view_width / OVERLAY_WIDTH, sy = (float)view_height / OVERLAY_HEIGHT;
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (w < 0) w = 0;
+    if (h < 0) h = 0;
+    gl.Enable(GL_SCISSOR_TEST);
+    gl.Scissor((GLint)(x * sx), (GLint)((float)view_height - (y + h) * sy), (GLsizei)(w * sx + 1.0f), (GLsizei)(h * sy + 1.0f));
+    clipped = true;
+}
+void overlayClipEnd(void) {
+    flush();
+    gl.Disable(GL_SCISSOR_TEST);
+    clipped = false;
+}
+
+// ---- glyphs -------------------------------------------------------------------------------------------------------------------------------
+static const OverlayGlyph *findGlyph(unsigned key) {
+    unsigned low = 0, high = overlay_glyph_count;
+    while (low < high) {
+        unsigned mid = (low + high) / 2;
+        if (overlay_glyph_codes[mid] < key) low = mid + 1;
+        else high = mid;
+    }
+    return low < overlay_glyph_count && overlay_glyph_codes[low] == key ? &overlay_glyphs[low] : NULL;
+}
+static const OverlayGlyph *glyph(unsigned code, unsigned style) {
+    const OverlayGlyph *g = findGlyph((style << 24) | code);
+    if (!g && style) g = findGlyph(code);
+    if (!g) g = findGlyph((style << 24) | '?');
+    if (!g) g = findGlyph('?');
+    return g;
+}
+// The next code point of UTF-8 text (bad bytes come out as '?').
+static unsigned nextCode(const unsigned char **cursor) {
+    const unsigned char *p = *cursor;
+    unsigned code = *p++;
+    if (code >= 0xC2 && code < 0xE0 && (p[0] & 0xC0) == 0x80) {
+        code = ((code & 0x1Fu) << 6) | (p[0] & 0x3Fu);
+        p += 1;
+    } else if (code >= 0xE0 && code < 0xF0 && (p[0] & 0xC0) == 0x80 && (p[1] & 0xC0) == 0x80) {
+        code = ((code & 0x0Fu) << 12) | ((p[0] & 0x3Fu) << 6) | (p[1] & 0x3Fu);
+        p += 2;
+    } else if (code >= 0xF0 && code < 0xF5 && (p[0] & 0xC0) == 0x80 && (p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80) {
+        code = '?';  // outside the atlas
+        p += 3;
+    } else if (code >= 0x80) {
+        code = '?';
+    }
+    *cursor = p;
+    return code;
+}
+static float textRun(float x, float y, const char *text, float size, uint32_t rgba, unsigned style, bool draw) {
     float scale = size / (float)overlay_font_line, pen = x;
     float u_scale = 1.0f / (float)overlay_font_width, v_scale = 1.0f / (float)overlay_font_height;
-    for (const unsigned char *p = (const unsigned char *)text; *p; ++p) {
-        const OverlayGlyph *g = glyph(*p);
-        if (*p != ' ') {
+    for (const unsigned char *p = (const unsigned char *)text; *p;) {
+        unsigned code = nextCode(&p);
+        const OverlayGlyph *g = glyph(code, style);
+        if (!g) continue;
+        if (draw && code != ' ') {
             float x0 = pen - g->bearing * scale;
             quad(font_texture, x0, y, x0 + (float)g->width * scale, y + (float)g->height * scale, (float)g->x * u_scale, (float)g->y * v_scale,
                  (float)(g->x + g->width) * u_scale, (float)(g->y + g->height) * v_scale, rgba);
@@ -369,12 +488,16 @@ float overlayText(float x, float y, const char *text, float size, uint32_t rgba)
     }
     return pen - x;
 }
+float overlayTextWidth(const char *text, float size) { return textRun(0, 0, text, size, 0, OVERLAY_STYLE_REGULAR, false); }
+float overlayTextBoldWidth(const char *text, float size) { return textRun(0, 0, text, size, 0, OVERLAY_STYLE_BOLD, false); }
+float overlayText(float x, float y, const char *text, float size, uint32_t rgba) { return textRun(x, y, text, size, rgba, OVERLAY_STYLE_REGULAR, true); }
+float overlayTextBold(float x, float y, const char *text, float size, uint32_t rgba) { return textRun(x, y, text, size, rgba, OVERLAY_STYLE_BOLD, true); }
 float overlayTextCentered(float centre_x, float y, const char *text, float size, uint32_t rgba) {
     return overlayText(centre_x - overlayTextWidth(text, size) / 2, y, text, size, rgba);
 }
-void overlayTextFit(float x, float y, const char *text, float size, float max_width, uint32_t rgba) {
-    if (overlayTextWidth(text, size) <= max_width) {
-        overlayText(x, y, text, size, rgba);
+static void textFit(float x, float y, const char *text, float size, float max_width, uint32_t rgba, unsigned style) {
+    if (textRun(0, 0, text, size, 0, style, false) <= max_width) {
+        textRun(x, y, text, size, rgba, style, true);
         return;
     }
     char line[512];
@@ -382,14 +505,69 @@ void overlayTextFit(float x, float y, const char *text, float size, float max_wi
     if (length > sizeof(line) - 4) length = sizeof(line) - 4;
     memcpy(line, text, length);
     for (; length; --length) {
+        if ((line[length] & 0xC0) == 0x80 && length < strlen(text)) continue;  // not inside a UTF-8 sequence
         memcpy(line + length, "...", 4);
-        if (overlayTextWidth(line, size) <= max_width) break;
+        if (textRun(0, 0, line, size, 0, style, false) <= max_width) break;
     }
-    overlayText(x, y, length ? line : "...", size, rgba);
+    textRun(x, y, length ? line : "...", size, rgba, style, true);
+}
+void overlayTextFit(float x, float y, const char *text, float size, float max_width, uint32_t rgba) {
+    textFit(x, y, text, size, max_width, rgba, OVERLAY_STYLE_REGULAR);
+}
+void overlayTextFitBold(float x, float y, const char *text, float size, float max_width, uint32_t rgba) {
+    textFit(x, y, text, size, max_width, rgba, OVERLAY_STYLE_BOLD);
+}
+void overlayIcon(unsigned icon, float cx, float cy, float size, uint32_t rgba) {
+    const OverlayGlyph *g = findGlyph((OVERLAY_STYLE_ICON << 24) | icon);
+    if (!g) return;
+    float u_scale = 1.0f / (float)overlay_font_width, v_scale = 1.0f / (float)overlay_font_height, half = size / 2;
+    quad(font_texture, cx - half, cy - half, cx + half, cy + half, (float)g->x * u_scale, (float)g->y * v_scale, (float)(g->x + g->width) * u_scale,
+         (float)(g->y + g->height) * v_scale, rgba);
 }
 void overlayLogo(float x, float y, float height) {
     float width = height * (float)overlay_logo_width / (float)overlay_logo_height;
     quad(logo_texture, x, y, x + width, y + height, 0, 0, 1, 1, 0xFFFFFFFFu);
+}
+
+// ---- pictures -----------------------------------------------------------------------------------------------------------------------------
+struct OverlayImage {
+    unsigned width, height, texture_generation;
+    GLuint texture;
+    uint32_t *pixels;
+};
+OverlayImage *overlayImageCreate(unsigned width, unsigned height, const uint32_t *rgba) {
+    if (!width || !height || width > 4096 || height > 4096) return NULL;
+    OverlayImage *image = calloc(1, sizeof(*image));
+    if (!image) return NULL;
+    image->pixels = malloc((size_t)width * height * 4u);
+    if (!image->pixels) {
+        free(image);
+        return NULL;
+    }
+    memcpy(image->pixels, rgba, (size_t)width * height * 4u);
+    image->width = width;
+    image->height = height;
+    return image;
+}
+void overlayImageDestroy(OverlayImage *image) {
+    if (!image) return;
+    if (image->texture && image->texture_generation == generation && gl_state > 0 && eglGetCurrentContext() != EGL_NO_CONTEXT)
+        gl.DeleteTextures(1, &image->texture);
+    free(image->pixels);
+    free(image);
+}
+void overlayImageDraw(OverlayImage *image, float x, float y, float w, float h, float radius, uint32_t tint) {
+    if (!image) return;
+    if (!image->texture || image->texture_generation != generation) {  // made in this context? (the batch's texture binding is ours to change)
+        flush();
+        image->texture = upload(image->pixels, image->width, image->height);
+        image->texture_generation = generation;
+    }
+    if (radius > 0 && rounded_ok)
+        quadEx(image->texture, x - 1, y - 1, x + w + 1, y + h + 1, -1.0f / w, -1.0f / h, 1.0f + 1.0f / w, 1.0f + 1.0f / h, tint, tint,
+                radius, 0.0f);
+    else
+        quad(image->texture, x, y, x + w, y + h, 0, 0, 1, 1, tint);
 }
 
 // Whether the picture drawn so far shows anything: a few pixels are read back, so call it seldom.
