@@ -23,6 +23,7 @@ jobs:
           cp src/main.rs "$RUNNER_TEMP/out/main.rs"
           cp core/src/token.rs "$RUNNER_TEMP/out/token.rs" || true
           cp core/src/session.rs "$RUNNER_TEMP/out/session.rs" || true
+          grep -n "pub fn" connect/src/spirc.rs > "$RUNNER_TEMP/out/spirc-fns.txt" || true
           cd "$RUNNER_TEMP/out"
           git init -q && git checkout -q -b peek
           git config user.name ci && git config user.email ci@users.noreply.github.com
