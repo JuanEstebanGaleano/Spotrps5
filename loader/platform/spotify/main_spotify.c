@@ -5,10 +5,13 @@
 // "pipe" backend writes raw S16 stereo 44.1 kHz PCM to stdout; the loader hands those bytes to pcmSink, which resamples to the
 // console's 48 kHz and writes them to the audio output. Logs go over UDP (port 18194, tools/udplog.py).
 #include "diagnostics.h"
+#include "api.h"
 #include "game.h"
 #include "overlay.h"
+#include "overlay_icons.h"
 #include "platform.h"
 #include "prospero_version.h"  // PROSPERO_RELEASE, PROSPERO_TITLE_ID (generated at build time)
+#include "ui.h"
 #include <EGL/egl.h>
 #include <GL/gl.h>
 #include <pthread.h>
@@ -25,7 +28,7 @@ const size_t ps5_opengl_heap_size = 768u << 20;
 
 int sceKernelUsleep(unsigned int microseconds);
 
-#define MILESTONE "spotrps5-4a"
+#define MILESTONE "spotrps5-5a"
 #define DEVICE_NAME "Spotrps5"
 #define ROOT "/download0/spotrps5"
 
@@ -202,10 +205,12 @@ static void drawScreen(const char *address, unsigned frame) {
         glClear(GL_COLOR_BUFFER_BIT);
         return;
     }
-    overlayClear(0x0B1A12FF);
-    overlayRect(0, 0, OVERLAY_WIDTH, 8, 0x1DB954FF);
-    overlayTextCentered(OVERLAY_WIDTH / 2, 330, "Spotrps5", 96, 0x1DB954FF);
-    overlayTextCentered(OVERLAY_WIDTH / 2, 450, "Spotify Connect para PS5", 40, 0xFFFFFFFF);
+    overlayClear(0x000000FF);
+    overlayRoundRect(260, 90, OVERLAY_WIDTH - 520, 900, 28, 0x121212FF);
+    overlayCircle(OVERLAY_WIDTH / 2, 250, 90, 0x1ED760FF);
+    overlayIcon(OVERLAY_ICON_NOTE, OVERLAY_WIDTH / 2, 250, 120, 0x000000FF);
+    overlayTextBold(OVERLAY_WIDTH / 2 - overlayTextBoldWidth("Spotrps5", 96) / 2, 370, "Spotrps5", 96, 0xFFFFFFFF);
+    overlayTextCentered(OVERLAY_WIDTH / 2, 480, "Spotify para tu PS5", 40, 0xB3B3B3FF);
     static const char *const dots[] = {"", ".", "..", "..."};
     char line[160];
     int state = atomic_load(&player_state);
@@ -226,7 +231,7 @@ static void drawScreen(const char *address, unsigned frame) {
     } else if (now_playing[0]) {
         overlayTextCentered(OVERLAY_WIDTH / 2, 540, "Reproduciendo", 30, 0x1DB954FF);
         overlayTextCentered(OVERLAY_WIDTH / 2, 610, now_playing, 46, 0xFFFFFFFF);
-        overlayTextCentered(OVERLAY_WIDTH / 2, 700, "Cruz: pausa / play     L1 / R1: anterior / siguiente     Arriba / Abajo: volumen", 26, 0xC8C8C8FF);
+        overlayTextCentered(OVERLAY_WIDTH / 2, 700, "Conectando con tu cuenta...", 30, 0xB3B3B3FF);
     } else {
         snprintf(line, sizeof(line), "Abre Spotify (Premium) y elige el dispositivo \"%s\"%s", DEVICE_NAME, dots[(frame / 30) % 4]);
         overlayTextCentered(OVERLAY_WIDTH / 2, 600, line, 34, 0xE8E8E8FF);
@@ -237,7 +242,7 @@ static void drawScreen(const char *address, unsigned frame) {
     snprintf(line, sizeof(line), "Prueba de hilos (%%gs): %s%s%s", probe == 0 ? "comprobando" : probe == 1 ? "FUNCIONA, via " : "NO FUNCIONA: ",
              probe == 0 ? "" : platformThreadPointerNote(), "");
     overlayTextCentered(OVERLAY_WIDTH / 2, 985, line, 24, probe == 1 ? 0x1DB954FF : probe == 2 ? 0xFF6060FF : 0xA0A0A0FF);
-    snprintf(line, sizeof(line), "v%s (%s)  -  Circulo: salir", PROSPERO_RELEASE, MILESTONE);
+    snprintf(line, sizeof(line), "v%s (%s)  -  \x02 Circulo: salir", PROSPERO_RELEASE, MILESTONE);
     overlayText(40, OVERLAY_HEIGHT - 60, line, 26, 0x707070FF);
     overlayEnd();
 }
@@ -253,25 +258,31 @@ int main(void) {
     pthread_t probe_thread, player_thread;
     if (pthread_create(&probe_thread, NULL, tlsProbe, NULL)) atomic_store(&tls_result, 2);
     pthread_create(&player_thread, NULL, librespotThread, NULL);
+    apiStart(ROOT);  // the Web API needs librespot's session: it asks for a token until there is one
+    uiInit();
     for (unsigned frame = 1;; ++frame) {
+        PlatformPad pad;
+        memset(&pad, 0, sizeof(pad));
+        if (!platformPadRead(&pad)) pad.connected = false;
+        uint64_t now = platformMonotonicNs();
+        uiUpdate(&pad, now);
         if (screen) {
-            drawScreen(address, frame);
+            if (uiReady()) {
+                if (overlayBegin((unsigned)width, (unsigned)height)) {
+                    uiDraw(now);
+                    overlayEnd();
+                }
+            } else {
+                drawScreen(address, frame);
+            }
             eglSwapBuffers(display, surface);
         }
-        PlatformPad pad;
         static unsigned previous_buttons;
-        if (platformPadRead(&pad)) {
-            unsigned pressed = pad.buttons & ~previous_buttons;  // edges only
-            previous_buttons = pad.buttons;
-            if (pressed & PLATFORM_PAD_CROSS) gameSendLine("play_pause");
-            if (pressed & PLATFORM_PAD_R1) gameSendLine("next");
-            if (pressed & PLATFORM_PAD_L1) gameSendLine("prev");
-            if (pressed & PLATFORM_PAD_UP) gameSendLine("vol_up");
-            if (pressed & PLATFORM_PAD_DOWN) gameSendLine("vol_down");
-            if (pressed & PLATFORM_PAD_CIRCLE) {
-                diagnosticsTrace("Circle pressed: closing the title");
-                platformQuit();
-            }
+        unsigned pressed = pad.connected ? pad.buttons & ~previous_buttons : 0;  // edges only
+        previous_buttons = pad.connected ? pad.buttons : 0;
+        if ((pressed & PLATFORM_PAD_CIRCLE && !uiReady()) || uiWantsQuit()) {
+            diagnosticsTrace("closing the title");
+            platformQuit();
         }
         sceKernelUsleep(16000);
     }

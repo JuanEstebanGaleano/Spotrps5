@@ -5,7 +5,7 @@
 
   python3 tools/patch_librespot.py path/to/librespot
 
-Commands: token <file> <nonce> (Web API access token into a file), play_pause, play, pause, next, prev, vol_up, vol_down, shuffle_on, shuffle_off, repeat_on, repeat_off.
+Commands: token <file> <nonce> (Web API access token into a file), play_pause, play, pause, next, prev, vol_up, vol_down, shuffle_on, shuffle_off, repeat_on, repeat_off, repeat_track_on, repeat_track_off, volume <0-100>, seek <ms>.
 Fails loudly when the code it patches is not where it expects it (a different librespot revision).
 """
 import sys
@@ -44,12 +44,19 @@ ARM = """            Some(command) = command_rx.recv() => {
                     let mut parts = rest.split_whitespace();
                     if let (Some(file), Some(nonce)) = (parts.next(), parts.next()) {
                         let scopes = "user-read-private,user-read-email,user-library-read,user-library-modify,playlist-read-private,playlist-read-collaborative,user-read-recently-played,user-top-read,user-read-playback-state,user-modify-playback-state,user-read-currently-playing,user-follow-read";
-                        let text = match session.token_provider().get_token(scopes).await {
-                            Ok(token) => format!("{nonce}\\n{}\\n{}\\nEND\\n", token.expires_in.as_secs(), token.access_token),
-                            Err(e) => {
+                        // Only once connected (the loop must not wait on a session that is not there), and never for long.
+                        let answer = if spirc.is_some() && !session.is_invalid() {
+                            tokio::time::timeout(std::time::Duration::from_secs(8), session.token_provider().get_token(scopes)).await.ok()
+                        } else {
+                            None
+                        };
+                        let text = match answer {
+                            Some(Ok(token)) => format!("{nonce}\\n{}\\n{}\\nEND\\n", token.expires_in.as_secs(), token.access_token),
+                            Some(Err(e)) => {
                                 warn!("token request failed: {e}");
                                 format!("{nonce}\\n0\\nERROR\\nEND\\n")
                             }
+                            None => format!("{nonce}\\n0\\nERROR\\nEND\\n"),
                         };
                         if let Err(e) = std::fs::write(file, text) {
                             warn!("could not write {file}: {e}");
@@ -71,6 +78,13 @@ ARM = """            Some(command) = command_rx.recv() => {
                         "shuffle_off" => spirc.shuffle(false),
                         "repeat_on" => spirc.repeat(true),
                         "repeat_off" => spirc.repeat(false),
+                        "repeat_track_on" => spirc.repeat_track(true),
+                        "repeat_track_off" => spirc.repeat_track(false),
+                        c if c.starts_with("volume ") => {
+                            let percent = c[7..].trim().parse::<u32>().unwrap_or(50).min(100);
+                            spirc.set_volume((percent * 65535 / 100) as u16)
+                        }
+                        c if c.starts_with("seek ") => spirc.set_position_ms(c[5..].trim().parse::<u32>().unwrap_or(0)),
                         _ => Ok(()),
                     };
                     if let Err(e) = result {

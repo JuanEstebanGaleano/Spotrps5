@@ -94,7 +94,7 @@ uint32_t *jpegDecode(const uint8_t *data, size_t size, unsigned *width_out, unsi
     static bool tables_ready;
     if (!tables_ready) {
         for (int x = 0; x < 8; ++x)
-            for (int u = 0; u < 8; ++u) cosines[x][u] = (u ? 1.0f : (float)M_SQRT1_2) * cosf((float)((2 * x + 1) * u) * (float)M_PI / 16.0f) / 2.0f;
+            for (int u = 0; u < 8; ++u) cosines[x][u] = (u ? 1.0f : 0.70710678f) * cosf((float)((2 * x + 1) * u) * 3.14159265f / 16.0f) / 2.0f;
         tables_ready = true;
     }
     if (size < 4 || data[0] != 0xFF || data[1] != 0xD8) return NULL;

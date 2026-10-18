@@ -4,3 +4,4 @@ docker/extra-ca/*.crt
 build/
 private/
 dist/
+tools/ui_preview/preview
